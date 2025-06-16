@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -91,10 +92,8 @@ select{
 
 .hidden{display:none!important;}
 
-</style>
-
+  </style>
 </head>
-
 <body>
   <header>
     <h2>在庫管理のヤニすけだよ🚬<br>QRコードを読み込んでね♡</h2>
@@ -106,21 +105,18 @@ select{
   <div id="result" style="margin-top:8px;color:#089;">読み取り待機中…</div>
 
   <!-- ② カメラ開始ボタン & 画像フォールバック -->
-  <!-- ─────────ここを追加───────── -->
   <button id="startCameraBtn" class="btn">カメラを起動</button>
   <input id="fileInput"
          type="file"
          accept="image/*"
          capture="environment"
          class="hidden">
-  <!-- ─────────────────────────── -->
 
     <div id="formArea" class="hidden">
       <div class="field">
         <span class="label">読み取った品目コード：</span>
         <span id="codeDisplay" class="value"></span>
       </div>
-
 
       <!-- 用途選択 -->
       <p class="label">用途選択</p>
@@ -129,7 +125,7 @@ select{
         <button class="btn mode-btn" onclick="setMode('訪問', this)">訪問用</button>
       </div>
 
-     <div class="field">
+      <div class="field">
         <span class="label">品目名：</span>
         <span id="itemNameDisplay" class="value"></span>
       </div>
@@ -166,7 +162,6 @@ select{
         <option value="10">10</option>
       </select>
 
-
       <p class="label">操作種別</p>
       <button class="btn" onclick="submitData('入庫')">入庫</button>
       <button class="btn" onclick="submitData('出庫')">出庫</button>
@@ -185,11 +180,44 @@ select{
     </div>
   </main>
 
-<!-- ① ZXing ライブラリを browser → library に変える -->
+<!-- ZXing ライブラリ -->
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.18.6/umd/index.min.js"></script>
 
-<!-- ② defer 付きで自前コード。html5-qrcode 関連は完全に削除 -->
+<!-- メインスクリプト -->
 <script defer>
+  /* ========== Apps Script のデプロイ URL ========== */
+  const API_BASE_URL = 'https://script.google.com/macros/s/AKfycbwsztrHCboiTZVRjeu0PIrdx-1TXXZJTaqxOVkJ5iLAJtOtF8BKlPTdXumMK-XIxetWsQ/exec';
+
+  /* ========== API呼び出し用関数 ========== */
+  async function callApi(method, action, data = null) {
+    const url = new URL(API_BASE_URL);
+    if (method === 'GET') {
+      url.searchParams.append('action', action);
+      if (data) {
+        Object.entries(data).forEach(([key, value]) =>
+          url.searchParams.append(key, value));
+      }
+    }
+    const options = {
+      method,
+      mode: 'cors',
+      headers: {
+        'Content-Type': 'application/json',
+      }
+    };
+    if (method === 'POST') {
+      options.body = JSON.stringify({ action, ...data });
+    }
+    try {
+      const response = await fetch(url, options);
+      if (!response.ok) throw new Error('Network response was not ok');
+      return await response.json();
+    } catch (error) {
+      console.error('API Error:', error);
+      throw error;
+    }
+  }
+
   /* --- ZXing を取得（Safari12 互換：分割代入は使わない） --- */
   const BrowserQRCodeReader = ZXing.BrowserQRCodeReader;
   const NotFoundException   = ZXing.NotFoundException;
@@ -223,7 +251,6 @@ select{
   }
 
   /* ---------- スキャナー起動 ---------- */
-
   async function startScanner () {
     if (!hasCamera()) return document.getElementById('fileInput').click();
 
@@ -259,130 +286,125 @@ select{
     }
   }
 
-  /* ---------- 読み取り成功時の既存処理 ---------- */
-  function onScanSuccess (decodedText) {
+  /* ---------- 読み取り成功時の処理（API版） ---------- */
+  async function onScanSuccess(decodedText) {
     if (CURRENT_TEXT === decodedText) return;
     CURRENT_TEXT = decodedText;
-  document.getElementById("result").textContent = `QRコード読み取り完了: ${decodedText}`;
-  document.getElementById("formArea").classList.remove("hidden");
-  document.getElementById("codeDisplay").textContent = decodedText;
+    document.getElementById("result").textContent = `QRコード読み取り完了: ${decodedText}`;
+    document.getElementById("formArea").classList.remove("hidden");
+    document.getElementById("codeDisplay").textContent = decodedText;
 
-  google.script.run.withSuccessHandler(info => {
-    if (!info.name) {
-      showErrorPopup("エラー", "コードがデータベースに存在しません", returnToScanner);
+    try {
+      const info = await callApi('GET', 'getItemInfo', { code: decodedText });
+      if (!info.name) {
+        showErrorPopup("エラー", "コードがデータベースに存在しません", returnToScanner);
+        return;
+      }
+      currentItemName = info.name;
+      currentStockOut = info.stockOut;
+      currentStockVis = info.stockVis;
+      document.getElementById("itemNameDisplay").textContent = info.name;
+      document.getElementById("stockDisplay").textContent = "";
+    } catch (error) {
+      showErrorPopup("エラー", "データの取得に失敗しました", returnToScanner);
+    }
+  }
+
+  /* ---------- モード選択 ---------- */
+  window.setMode = function setMode(mode, btn){
+    selectedMode = mode;
+    // ボタン表示切替
+    document.querySelectorAll('#modeSelect .mode-btn')
+            .forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+
+    // 在庫表示を更新
+    const stock = mode === '訪問' ? currentStockVis : currentStockOut;
+    const sd    = document.getElementById('stockDisplay');
+    if (sd){
+      sd.textContent = stock;
+      stock === 0 ? sd.classList.add('zero') : sd.classList.remove('zero');
+    }
+  };
+
+  function resetModeUI(){
+    selectedMode = null;
+    document.querySelectorAll('#modeSelect .mode-btn')
+            .forEach(b => b.classList.remove('active'));
+    const sd = document.getElementById('stockDisplay');
+    if (sd) sd.textContent = '';
+  }
+
+  /* ---------- ポップアップ ---------- */
+  function showPopup(title,msg,okCb){
+    document.getElementById('popupHeader').textContent = title;
+    document.getElementById('popupContent').textContent = msg;
+    document.getElementById('popupOverlay').style.display='flex';
+    document.getElementById('popupOkButton').style.display='inline-block';
+    document.getElementById('restartButton').style.display='none';
+    document.getElementById('popupOkButton').onclick=()=>{closePopup();okCb&&okCb();};
+  }
+  function showErrorPopup(title,msg,okCb){
+    document.getElementById('popupHeader').textContent = title;
+    document.getElementById('popupContent').textContent = msg;
+    document.getElementById('popupOverlay').style.display='flex';
+    document.getElementById('popupOkButton').style.display='none';
+    document.getElementById('restartButton').style.display='inline-block';
+    document.getElementById('restartButton').onclick=()=>{closePopup();okCb&&okCb();};
+  }
+  function closePopup(){
+    document.getElementById('popupOverlay').style.display='none';
+  }
+
+  /* ---------- カメラ画面へ戻る ---------- */
+  function returnToScanner(){
+    document.getElementById("formArea").classList.add("hidden");
+    document.getElementById("result").textContent="";
+    document.getElementById("itemNameDisplay").textContent="";
+    CURRENT_TEXT="";
+    resetModeUI();
+    startScanner(); 
+  }
+
+  /* ---------- データ送信 ---------- */
+  async function submitData(operation) {
+    const staff = document.getElementById("staffSelect").value;
+    const quantity = document.getElementById("quantitySelect").value;
+
+    if (!staff || !quantity || !selectedMode) {
+      alert("スタッフ名・数量・用途（外来/訪問）を選択してください！");
       return;
     }
-    currentItemName = info.name;
-    currentStockOut = info.stockOut;
-    currentStockVis = info.stockVis;
-    document.getElementById("itemNameDisplay").textContent = info.name;
-    document.getElementById("stockDisplay").textContent = "";
-  }).getItemInfo(decodedText);
-}
 
-/* ---------- モード選択 ---------- */
-window.setMode = function setMode(mode, btn){
-  selectedMode = mode;
-  // ボタン表示切替
-  document.querySelectorAll('#modeSelect .mode-btn')
-          .forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-
-  // 在庫表示を更新
-  const stock = mode === '訪問' ? currentStockVis : currentStockOut;
-  const sd    = document.getElementById('stockDisplay');
-  if (sd){
-    sd.textContent = stock;
-    stock === 0 ? sd.classList.add('zero') : sd.classList.remove('zero');
-  }
-};
-
-function resetModeUI(){
-  selectedMode = null;
-  document.querySelectorAll('#modeSelect .mode-btn')
-          .forEach(b => b.classList.remove('active'));
-  const sd = document.getElementById('stockDisplay');
-  if (sd) sd.textContent = '';
-}
-   
-
-/* ---------- ポップアップ ---------- */
-function showPopup(title,msg,okCb){
-  document.getElementById('popupHeader').textContent = title;
-  document.getElementById('popupContent').textContent = msg;
-  document.getElementById('popupOverlay').style.display='flex';
-  document.getElementById('popupOkButton').style.display='inline-block';
-  document.getElementById('restartButton').style.display='none';
-  document.getElementById('popupOkButton').onclick=()=>{closePopup();okCb&&okCb();};
-}
-function showErrorPopup(title,msg,okCb){
-  document.getElementById('popupHeader').textContent = title;
-  document.getElementById('popupContent').textContent = msg;
-  document.getElementById('popupOverlay').style.display='flex';
-  document.getElementById('popupOkButton').style.display='none';
-  document.getElementById('restartButton').style.display='inline-block';
-  document.getElementById('restartButton').onclick=()=>{closePopup();okCb&&okCb();};
-}
-function closePopup(){
-  document.getElementById('popupOverlay').style.display='none';
-}
-
-/* ---------- カメラ画面へ戻る ---------- */
-function returnToScanner(){
-  document.getElementById("formArea").classList.add("hidden");
-  document.getElementById("result").textContent="";
-  document.getElementById("itemNameDisplay").textContent="";
-  CURRENT_TEXT="";
-  resetModeUI();
-  startScanner(); 
-}
-
-
-
-/* ---------- データ送信 ---------- */
-function submitData(operation){
-  const staff    = document.getElementById("staffSelect").value;
-  const quantity = document.getElementById("quantitySelect").value;
-
-  if(!staff||!quantity||!selectedMode){
-    alert("スタッフ名・数量・用途（外来/訪問）を選択してください！");
-    return;
-  }
-
-  const confirmMsg = `${currentItemName} を ${quantity}個、${operation} しますか？`;
-  showPopup("確認",confirmMsg,()=>{
-
-    const data={
-      code:CURRENT_TEXT,operation,staff,quantity,mode:selectedMode
-    };
-
-    function runAppendLog(){
-      google.script.run.withSuccessHandler(res=>{
-        if(res.result==='confirm'){
-          showPopup("確認",res.message,()=>{
-            data.confirmed=true;runAppendLog();
+    const confirmMsg = `${currentItemName} を ${quantity}個、${operation} しますか？`;
+    showPopup("確認", confirmMsg, async () => {
+      try {
+        const data = {
+          code: CURRENT_TEXT,
+          operation,
+          staff,
+          quantity,
+          mode: selectedMode
+        };
+        const response = await callApi('POST', 'appendLog', data);
+        if (response.result === 'success') {
+          showPopup("更新完了", response.message, () => {
+            document.getElementById("staffSelect").value = "";
+            document.getElementById("quantitySelect").value = "";
+            document.getElementById("result").textContent = "";
+            document.getElementById("formArea").classList.add("hidden");
+            document.getElementById("itemNameDisplay").textContent = "";
+            CURRENT_TEXT = "";
+            resetModeUI();
           });
-
-        }else if(res.result==='success'){
-          showPopup("更新完了",res.message,()=>{
-          });
-
-          document.getElementById("staffSelect").value="";
-          document.getElementById("quantitySelect").value="";
-          document.getElementById("result").textContent="";
-          document.getElementById("formArea").classList.add("hidden");
-          document.getElementById("itemNameDisplay").textContent="";
-          CURRENT_TEXT="";
-          resetModeUI();
-
-        }else{
-          showErrorPopup("エラー",res.message,returnToScanner);
+        } else {
+          showErrorPopup("エラー", response.message || "更新に失敗しました", returnToScanner);
         }
-      }).appendLog(data);
-    }
-    runAppendLog();
-  });
-}
-  </script>
+      } catch (error) {
+        showErrorPopup("エラー", "サーバーとの通信に失敗しました", returnToScanner);
+      }
+    });
+  }
+</script>
 </body>
 </html>
