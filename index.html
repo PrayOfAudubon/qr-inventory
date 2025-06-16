@@ -327,8 +327,8 @@ async function runSafariDiagnostics() {
   let currentStockVis   = 0;
   let preferredDeviceId = null; 
 
-  /* ---------- ページロード後 ---------- */
-
+/* ---------- ページロード後（Safari対応版） ---------- */
+  
 document.addEventListener('DOMContentLoaded', () => {
   // Safari検出
   const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
