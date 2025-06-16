@@ -400,8 +400,8 @@ async function callApi(method, action, data = null) {
           "確認",
           response.message,
           async () => {             // YES
-            data.confirmed = true;  // 確認フラグを付けて再送
-            response = await callApi('POST', 'appendLog', data);
+            data.confirmed = 'true';  // 確認フラグを付けて再送
+            response = await callApi('GET', 'appendLog', data);
             handleFinalResponse(response);
           },
           returnToScanner           // NO
