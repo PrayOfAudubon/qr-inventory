@@ -188,6 +188,7 @@ select{
   const API_BASE_URL = 'https://script.google.com/macros/s/AKfycbyX1-uptqS8n4lUtef9fRlhViMNX5pl_wzejAP5qfeR/dev';
 
 /* ========== Safari対応の改良版 callApi 関数 ========== */
+/* ========== 確実なSafari対応 callApi 関数 ========== */
 async function callApi(method, action, data = null) {
   return new Promise((resolve, reject) => {
     const timestamp = Date.now();
@@ -216,6 +217,7 @@ async function callApi(method, action, data = null) {
     url += params.join('&');
     
     let isResolved = false;
+    let timeoutId;
     
     // グローバルコールバック関数
     window[callbackName] = function(result) {
@@ -223,6 +225,7 @@ async function callApi(method, action, data = null) {
       isResolved = true;
       
       console.log('JSONP success:', callbackName, result);
+      clearTimeout(timeoutId);
       cleanup();
       resolve(result);
     };
@@ -246,7 +249,7 @@ async function callApi(method, action, data = null) {
     }
     
     // タイムアウト設定
-    const timeoutId = setTimeout(() => {
+    timeoutId = setTimeout(() => {
       if (isResolved) return;
       isResolved = true;
       
@@ -325,6 +328,7 @@ async function runSafariDiagnostics() {
   let preferredDeviceId = null; 
 
   /* ---------- ページロード後 ---------- */
+
 document.addEventListener('DOMContentLoaded', () => {
   // Safari検出
   const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
@@ -332,12 +336,12 @@ document.addEventListener('DOMContentLoaded', () => {
   if (isSafari) {
     console.log('Safari detected, applying compatibility fixes');
     
-    // Safari用のテスト通信（3秒後）
+    // Safari用のテスト通信（2秒後）
     setTimeout(async () => {
       try {
         console.log('Safari connection test starting...');
         
-        // まずシンプルなテストから
+        // シンプルなテストリクエスト
         const testResult = await callApi('GET', 'test', { code: 'TEST' });
         console.log('Safari connection test result:', testResult);
         
