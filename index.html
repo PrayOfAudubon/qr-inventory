@@ -189,42 +189,38 @@ select{
   const API_BASE_URL = 'https://script.google.com/macros/s/AKfycbyX1-uptqS8n4lUtef9fRlhViMNX5pl_wzejAP5qfeR/dev';
 
 async function callApi(method, action, data = null) {
-  if (method === 'GET') {
-    // JSONP方式でCORS回避
-    return new Promise((resolve, reject) => {
-      const callbackName = 'jsonp_callback_' + Date.now();
-      const url = new URL(API_BASE_URL);
-      url.searchParams.set('action', action);
-      if (data) {
-        Object.keys(data).forEach(key => url.searchParams.set(key, data[key]));
-      }
-      url.searchParams.set('callback', callbackName);
-      
-      window[callbackName] = function(result) {
-        document.head.removeChild(script);
-        delete window[callbackName];
-        resolve(result);
-      };
-      
-      const script = document.createElement('script');
-      script.src = url.toString();
-      script.onerror = () => {
-        document.head.removeChild(script);
-        delete window[callbackName];
-        reject(new Error('JSONP request failed'));
-      };
-      document.head.appendChild(script);
-    });
-  } else {
-    // POST は従来通り
-    const response = await fetch(API_BASE_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
-    });
-    if (!response.ok) throw new Error('Network response was not ok');
-    return await response.json();
-  }
+  // 全てGETリクエスト + JSONP方式で統一
+  return new Promise((resolve, reject) => {
+    const callbackName = 'jsonp_callback_' + Date.now();
+    const url = new URL(API_BASE_URL);
+    url.searchParams.set('action', action);
+    
+    // dataの中身を全てURLパラメータに追加
+    if (data) {
+      Object.keys(data).forEach(key => {
+        if (key !== 'action') { // actionは既に設定済み
+          url.searchParams.set(key, data[key]);
+        }
+      });
+    }
+    
+    url.searchParams.set('callback', callbackName);
+    
+    window[callbackName] = function(result) {
+      document.head.removeChild(script);
+      delete window[callbackName];
+      resolve(result);
+    };
+    
+    const script = document.createElement('script');
+    script.src = url.toString();
+    script.onerror = () => {
+      document.head.removeChild(script);
+      delete window[callbackName];
+      reject(new Error('JSONP request failed'));
+    };
+    document.head.appendChild(script);
+  });
 }
 
 
