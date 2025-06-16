@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ザイ子ちゃん(⋈◍＞◡＜◍)。✧♡</title>
+
+  <style>
+/* ========== 共通レイアウト ========== */
+body{
+  font-family:'Segoe UI','Helvetica Neue',sans-serif;
+  background:#f4f6fa;margin:0;padding:0;font-size:22px;
+}
+header{
+  background:linear-gradient(90deg,#42a5f5,#1e88e5);
+  color:#fff;text-align:center;padding:28px 20px;
+  box-shadow:0 2px 6px rgba(0,0,0,.2);
+}
+header h2{font-size:28px;line-height:1.8;margin:0;text-shadow:1px 1px 3px rgba(0,0,0,.2);}
+main{width:100vw;padding:24px;box-sizing:border-box;}
+
+#reader{
+  margin:20px 0;padding:24px;background:#fff;border-radius:16px;
+  box-shadow:0 2px 8px rgba(0,0,0,.08);width:100%;
+}
+#formArea{
+  padding:32px 24px;background:#fff;
+  border:1px solid #e0e0e0;border-radius:20px;
+  box-shadow:0 8px 24px rgba(0,0,0,.06);margin-top:24px;
+}
+
+/* ========== “ラベル:値” を 2 列グリッドで ========== */
+.field{
+  display:grid;grid-template-columns:max-content 1fr;align-items:center;
+  column-gap:12px;background:#fff;border:1px solid #e0e0e0;border-radius:12px;
+  padding:14px 18px;margin:16px 0;
+}
+.label{
+  font-weight:700;font-size:22px;white-space:nowrap;margin:0;
+}
+.value{
+  font-weight:600;font-size:22px;color:#1565c0;margin:0;word-break:break-all;
+}
+
+/* ========== 在庫ゼロで点滅 ========== */
+#stockDisplay.zero{color:#e91e63;animation:blink 1s steps(2,start) infinite;}
+@keyframes blink{to{visibility:hidden;}}
+
+/* ========== セレクト・ボタン ========== */
+select{
+  width:100%;padding:18px;font-size:22px;border-radius:14px;
+  border:1px solid #ccc;margin:22px 0 0;box-shadow:inset 0 1px 2px rgba(0,0,0,.04);
+}
+.btn{
+  display:block;width:100%;padding:18px;margin:14px 0;font-size:22px;
+  color:#fff;border:none;border-radius:32px;cursor:pointer;
+  background:linear-gradient(90deg,#42a5f5,#1e88e5);
+  box-shadow:0 4px 6px rgba(0,0,0,.1);transition:transform .1s ease;
+}
+.btn:hover{transform:translateY(-2px);background:linear-gradient(90deg,#1e88e5,#1565c0);}
+
+/* 用途ボタン強調 */
+.mode-btn      {background:#1e88e5;}
+.mode-btn:hover{background:#1565c0;}
+.mode-btn.active{
+  background:#ef5350;box-shadow:0 0 0 3px #ffcdd2 inset;
+}
+/* 黒いフォーカス枠を消す */
+.mode-btn:focus{outline:none;}
+
+/* ========== ポップアップ ========== */
+.popup-overlay{
+  position:fixed;inset:0;background:rgba(0,0,0,.4);
+  display:none;justify-content:center;align-items:center;z-index:1000;
+}
+.popup{
+  background:#fff;border-radius:20px;padding:28px;width:90%;max-width:420px;
+  box-shadow:0 4px 16px rgba(0,0,0,.2);text-align:center;
+}
+.popup-header{font-size:26px;font-weight:bold;margin-bottom:14px;}
+.popup-content{font-size:22px;margin-bottom:24px;}
+.popup-button,.popup-close{
+  background:#42a5f5;border:none;color:#fff;padding:16px 28px;font-size:22px;
+  border-radius:32px;cursor:pointer;margin:8px 0;
+}
+.popup-button:hover{background:#1e88e5;}
+.popup-close{
+  position:absolute;top:10px;right:14px;background:none;color:#999;font-size:26px;
+}
+.popup-close:hover{color:#666;}
+
+.hidden{display:none!important;}
+
+</style>
+
+</head>
+
+<body>
+  <header>
+    <h2>在庫管理のヤニすけだよ🚬<br>QRコードを読み込んでね♡</h2>
+  </header>
+
+  <main>
+  <!-- ① QR プレビュー領域 -->
+  <video id="reader" playsinline muted></video>
+  <div id="result" style="margin-top:8px;color:#089;">読み取り待機中…</div>
+
+  <!-- ② カメラ開始ボタン & 画像フォールバック -->
+  <!-- ─────────ここを追加───────── -->
+  <button id="startCameraBtn" class="btn">カメラを起動</button>
+  <input id="fileInput"
+         type="file"
+         accept="image/*"
+         capture="environment"
+         class="hidden">
+  <!-- ─────────────────────────── -->
+
+    <div id="formArea" class="hidden">
+      <div class="field">
+        <span class="label">読み取った品目コード：</span>
+        <span id="codeDisplay" class="value"></span>
+      </div>
+
+
+      <!-- 用途選択 -->
+      <p class="label">用途選択</p>
+      <div id="modeSelect">
+        <button class="btn mode-btn" onclick="setMode('外来', this)">外来用</button>
+        <button class="btn mode-btn" onclick="setMode('訪問', this)">訪問用</button>
+      </div>
+
+     <div class="field">
+        <span class="label">品目名：</span>
+        <span id="itemNameDisplay" class="value"></span>
+      </div>
+
+      <div class="field">
+        <span class="label">在庫数：</span>
+        <span id="stockDisplay" class="value"></span>
+      </div>
+
+      <p class="label">スタッフ名</p>
+      <select id="staffSelect">
+        <option value="">--選択してください--</option>
+        <option value="渡会">渡会</option><option value="山崎">山崎</option>
+        <option value="中野">中野</option><option value="桶川">桶川</option>
+        <option value="加藤">加藤</option><option value="鈴木">鈴木</option>
+        <option value="星野">星野</option><option value="池上">池上</option>
+        <option value="泉水">泉水</option><option value="上岡">上岡</option>
+        <option value="吉田">吉田</option><option value="堀井">堀井</option>
+        <option value="高原">高原</option><option value="村岡">村岡</option>
+      </select>
+
+      <p class="label">数量</p>
+      <select id="quantitySelect">
+        <option value="">--選択してください--</option>
+        <option value="1">1</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+        <option value="5">5</option>
+        <option value="6">6</option>
+        <option value="7">7</option>
+        <option value="8">8</option>
+        <option value="9">9</option>
+        <option value="10">10</option>
+      </select>
+
+
+      <p class="label">操作種別</p>
+      <button class="btn" onclick="submitData('入庫')">入庫</button>
+      <button class="btn" onclick="submitData('出庫')">出庫</button>
+      <button class="btn" onclick="returnToScanner()">カメラ画面へ戻る</button>
+    </div>
+
+    <!-- ポップアップ -->
+    <div class="popup-overlay" id="popupOverlay">
+      <div class="popup">
+        <button class="popup-close" onclick="closePopup()">&times;</button>
+        <div class="popup-header" id="popupHeader"></div>
+        <div class="popup-content" id="popupContent"></div>
+        <button class="popup-button" id="popupOkButton">OK</button>
+        <button class="popup-button" id="restartButton" style="display:none;">QR読み取り画面に戻る</button>
+      </div>
+    </div>
+  </main>
+
+<!-- ① ZXing ライブラリを browser → library に変える -->
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.18.6/umd/index.min.js"></script>
+
+<!-- ② defer 付きで自前コード。html5-qrcode 関連は完全に削除 -->
+<script defer>
+  /* --- ZXing を取得（Safari12 互換：分割代入は使わない） --- */
+  const BrowserQRCodeReader = ZXing.BrowserQRCodeReader;
+  const NotFoundException   = ZXing.NotFoundException;
+
+  /* ---------- グローバル状態 ---------- */
+  let codeReader;
+  let CURRENT_TEXT      = "";
+  let currentItemName   = "";
+  let selectedMode      = null;
+  let currentStockOut   = 0;
+  let currentStockVis   = 0;
+  let preferredDeviceId = null; 
+
+  /* ---------- ページロード後 ---------- */
+  document.addEventListener('DOMContentLoaded', () => {
+    codeReader = new BrowserQRCodeReader(undefined, { delayBetweenScanAttempts: 200 });
+
+    document.getElementById('startCameraBtn')
+            .addEventListener('click', startScanner);
+
+    document.getElementById('fileInput')
+            .addEventListener('change', e => {
+              const f = e.target.files[0];
+              if (f) decodeFromFile(f);
+    });
+  });
+
+  /* ---------- 判定：カメラ API がある？ ---------- */
+  function hasCamera () {
+    return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  }
+
+  /* ---------- スキャナー起動 ---------- */
+
+  async function startScanner () {
+    if (!hasCamera()) return document.getElementById('fileInput').click();
+
+    const cams = await codeReader.listVideoInputDevices();
+
+    // ❶ 背面カメラを優先。ただし記憶しているものがあればそれを使う
+    let deviceId = preferredDeviceId;
+    if (!deviceId) {
+      deviceId = (cams.find(c => /back|rear|environment/i.test(c.label)) || cams[0] || {}).deviceId;
+      preferredDeviceId = deviceId;    // 覚える
+    }
+
+    codeReader.decodeFromVideoDevice(deviceId, 'reader', (res, err) => {
+      if (res) {
+        onScanSuccess(res.getText());
+        codeReader.reset();
+      } else if (err && !(err instanceof NotFoundException)) {
+        // ❷ err が undefined なら何もしない
+        if (err && err.message) {
+          alert('カメラエラー: ' + err.message);
+        }
+      }
+    });
+  }
+
+  /* ---------- 画像ファイル読み取り ---------- */
+  async function decodeFromFile (file) {
+    try {
+      const r = await codeReader.decodeFromImage(file);
+      onScanSuccess(r.getText());
+    } catch (e) {
+      alert('画像から QR を検出できませんでした');
+    }
+  }
+
+  /* ---------- 読み取り成功時の既存処理 ---------- */
+  function onScanSuccess (decodedText) {
+    if (CURRENT_TEXT === decodedText) return;
+    CURRENT_TEXT = decodedText;
+  document.getElementById("result").textContent = `QRコード読み取り完了: ${decodedText}`;
+  document.getElementById("formArea").classList.remove("hidden");
+  document.getElementById("codeDisplay").textContent = decodedText;
+
+  google.script.run.withSuccessHandler(info => {
+    if (!info.name) {
+      showErrorPopup("エラー", "コードがデータベースに存在しません", returnToScanner);
+      return;
+    }
+    currentItemName = info.name;
+    currentStockOut = info.stockOut;
+    currentStockVis = info.stockVis;
+    document.getElementById("itemNameDisplay").textContent = info.name;
+    document.getElementById("stockDisplay").textContent = "";
+  }).getItemInfo(decodedText);
+}
+
+/* ---------- モード選択 ---------- */
+window.setMode = function setMode(mode, btn){
+  selectedMode = mode;
+  // ボタン表示切替
+  document.querySelectorAll('#modeSelect .mode-btn')
+          .forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+
+  // 在庫表示を更新
+  const stock = mode === '訪問' ? currentStockVis : currentStockOut;
+  const sd    = document.getElementById('stockDisplay');
+  if (sd){
+    sd.textContent = stock;
+    stock === 0 ? sd.classList.add('zero') : sd.classList.remove('zero');
+  }
+};
+
+function resetModeUI(){
+  selectedMode = null;
+  document.querySelectorAll('#modeSelect .mode-btn')
+          .forEach(b => b.classList.remove('active'));
+  const sd = document.getElementById('stockDisplay');
+  if (sd) sd.textContent = '';
+}
+   
+
+/* ---------- ポップアップ ---------- */
+function showPopup(title,msg,okCb){
+  document.getElementById('popupHeader').textContent = title;
+  document.getElementById('popupContent').textContent = msg;
+  document.getElementById('popupOverlay').style.display='flex';
+  document.getElementById('popupOkButton').style.display='inline-block';
+  document.getElementById('restartButton').style.display='none';
+  document.getElementById('popupOkButton').onclick=()=>{closePopup();okCb&&okCb();};
+}
+function showErrorPopup(title,msg,okCb){
+  document.getElementById('popupHeader').textContent = title;
+  document.getElementById('popupContent').textContent = msg;
+  document.getElementById('popupOverlay').style.display='flex';
+  document.getElementById('popupOkButton').style.display='none';
+  document.getElementById('restartButton').style.display='inline-block';
+  document.getElementById('restartButton').onclick=()=>{closePopup();okCb&&okCb();};
+}
+function closePopup(){
+  document.getElementById('popupOverlay').style.display='none';
+}
+
+/* ---------- カメラ画面へ戻る ---------- */
+function returnToScanner(){
+  document.getElementById("formArea").classList.add("hidden");
+  document.getElementById("result").textContent="";
+  document.getElementById("itemNameDisplay").textContent="";
+  CURRENT_TEXT="";
+  resetModeUI();
+  startScanner(); 
+}
+
+
+
+/* ---------- データ送信 ---------- */
+function submitData(operation){
+  const staff    = document.getElementById("staffSelect").value;
+  const quantity = document.getElementById("quantitySelect").value;
+
+  if(!staff||!quantity||!selectedMode){
+    alert("スタッフ名・数量・用途（外来/訪問）を選択してください！");
+    return;
+  }
+
+  const confirmMsg = `${currentItemName} を ${quantity}個、${operation} しますか？`;
+  showPopup("確認",confirmMsg,()=>{
+
+    const data={
+      code:CURRENT_TEXT,operation,staff,quantity,mode:selectedMode
+    };
+
+    function runAppendLog(){
+      google.script.run.withSuccessHandler(res=>{
+        if(res.result==='confirm'){
+          showPopup("確認",res.message,()=>{
+            data.confirmed=true;runAppendLog();
+          });
+
+        }else if(res.result==='success'){
+          showPopup("更新完了",res.message,()=>{
+          });
+
+          document.getElementById("staffSelect").value="";
+          document.getElementById("quantitySelect").value="";
+          document.getElementById("result").textContent="";
+          document.getElementById("formArea").classList.add("hidden");
+          document.getElementById("itemNameDisplay").textContent="";
+          CURRENT_TEXT="";
+          resetModeUI();
+
+        }else{
+          showErrorPopup("エラー",res.message,returnToScanner);
+        }
+      }).appendLog(data);
+    }
+    runAppendLog();
+  });
+}
+  </script>
+</body>
+</html>
