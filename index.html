@@ -393,7 +393,7 @@ async function callApi(method, action, data = null) {
           mode: selectedMode
         };
         
-        const response = await callApi('POST', 'appendLog', data);
+        let response = await callApi('POST', 'appendLog', data);
 
         if (response.result === 'confirm') {
         showConfirmPopup(
