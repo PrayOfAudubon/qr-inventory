@@ -307,112 +307,6 @@ function safariJsonpRequest(action, data) {
   });
 }
 
-/* ========== Safari専用JSONP関数 ========== */
-function safariJsonpRequest(action, data) {
-  return new Promise((resolve, reject) => {
-    const timestamp = Date.now();
-    const callbackName = 'safari_cb_' + timestamp;
-    
-    // URLを手動で構築（より確実）
-    let urlString = API_BASE_URL + '?';
-    const params = [];
-    
-    params.push('action=' + encodeURIComponent(action));
-    
-    if (data) {
-      Object.keys(data).forEach(key => {
-        if (key !== 'action') {
-          params.push(encodeURIComponent(key) + '=' + encodeURIComponent(data[key]));
-        }
-      });
-    }
-    
-    params.push('callback=' + callbackName);
-    urlString += params.join('&');
-    
-    // Safari用の長めのタイムアウト
-    const timeoutId = setTimeout(() => {
-      cleanup();
-      reject(new Error('Safari JSONP timeout'));
-    }, 30000); // 30秒
-    
-    function cleanup() {
-      clearTimeout(timeoutId);
-      if (window[callbackName]) {
-        try {
-          delete window[callbackName];
-        } catch (e) {
-          window[callbackName] = undefined;
-        }
-      }
-      const script = document.getElementById(callbackName);
-      if (script && script.parentNode) {
-        try {
-          script.parentNode.removeChild(script);
-        } catch (e) {
-          console.warn('Failed to remove script element');
-        }
-      }
-    }
-    
-    // Safari用のコールバック関数
-    window[callbackName] = function(result) {
-      console.log('Safari JSONP success:', result);
-      cleanup();
-      resolve(result);
-    };
-    
-    // スクリプト要素を作成
-    const script = document.createElement('script');
-    script.id = callbackName;
-    script.type = 'text/javascript';
-    script.charset = 'utf-8';
-    script.async = true;
-    
-    script.onerror = function(error) {
-      console.error('Safari JSONP script error:', error);
-      cleanup();
-      reject(new Error('Safari JSONP script loading failed'));
-    };
-    
-    script.onload = function() {
-      console.log('Safari JSONP script loaded');
-    };
-    
-    console.log('Safari JSONP request URL:', urlString);
-    script.src = urlString;
-    
-    // DOMに追加
-    document.head.appendChild(script);
-  });
-}
-
-/* ========== 改良されたSafari接続テスト ========== */
-async function testSafariConnection() {
-  try {
-    console.log('Safari: 接続テスト開始');
-    
-    // まず簡単なテストから
-    const testResult = await safariJsonpRequest('getItemInfo', { code: 'TEST' });
-    console.log('Safari: 接続テスト成功', testResult);
-    
-    // 成功の場合はユーザーに通知しない（静かに成功）
-    
-  } catch (error) {
-    console.error('Safari: 接続テスト失敗', error);
-    
-    // より詳細なエラー診断
-    const diagnostics = await runSafariDiagnostics();
-    
-    if (diagnostics.hasInternet) {
-      alert('Safari設定の問題の可能性があります。\n' +
-            'Safariの設定で「サイト越えトラッキングを防ぐ」を無効にしてみてください。\n' +
-            'または、プライベートブラウジングモードをお試しください。');
-    } else {
-      alert('インターネット接続を確認してください。');
-    }
-  }
-}
 
 /* ========== Safari診断機能 ========== */
 async function runSafariDiagnostics() {
@@ -454,8 +348,6 @@ async function runSafariDiagnostics() {
   let preferredDeviceId = null; 
 
   /* ---------- ページロード後 ---------- */
-/* ---------- ページロード後（Safari対応版） ---------- */
-/* ---------- ページロード後（Safari対応版） ---------- */
 document.addEventListener('DOMContentLoaded', () => {
   // Safari検出
   const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
