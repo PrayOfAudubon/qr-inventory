@@ -189,54 +189,17 @@ select{
 
 /* ========== Safari対応の改良版 callApi 関数 ========== */
 async function callApi(method, action, data = null) {
-  // Safari対応: より堅牢なアプローチ
-  const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
-  
-  if (isSafari) {
-    console.log('Safari detected: using JSONP-only approach');
-    // SafariではJSONPのみを使用
-    return safariJsonpRequest(action, data);
-  } else {
-    // Chrome等ではFetch APIを試してからJSONPにフォールバック
-    try {
-      let urlString = API_BASE_URL + '?action=' + encodeURIComponent(action);
-      
-      if (data) {
-        Object.keys(data).forEach(key => {
-          if (key !== 'action') {
-            urlString += '&' + encodeURIComponent(key) + '=' + encodeURIComponent(data[key]);
-          }
-        });
-      }
-      
-      const fetchResponse = await fetch(urlString, {
-        method: 'GET',
-        mode: 'cors',
-        credentials: 'omit'
-      });
-      
-      if (fetchResponse.ok) {
-        return await fetchResponse.json();
-      } else {
-        throw new Error('Fetch failed');
-      }
-    } catch (fetchError) {
-      console.log('Fetch failed, falling back to JSONP');
-      return safariJsonpRequest(action, data);
-    }
-  }
-}
-
-/* ========== Safari専用JSONP関数 ========== */
-function safariJsonpRequest(action, data) {
   return new Promise((resolve, reject) => {
     const timestamp = Date.now();
-    const callbackName = 'safari_cb_' + timestamp;
+    const random = Math.floor(Math.random() * 10000);
+    const callbackName = 'gas_cb_' + timestamp + '_' + random;
     
-    // URLを手動で構築（より確実）
-    let urlString = API_BASE_URL + '?';
+    // URLを構築
+    let url = API_BASE_URL + '?';
     const params = [];
     
+    // callbackを最初に追加
+    params.push('callback=' + encodeURIComponent(callbackName));
     params.push('action=' + encodeURIComponent(action));
     
     if (data) {
@@ -247,62 +210,76 @@ function safariJsonpRequest(action, data) {
       });
     }
     
-    params.push('callback=' + callbackName);
-    urlString += params.join('&');
+    // タイムスタンプを追加（キャッシュ防止）
+    params.push('_=' + timestamp);
     
-    // Safari用の長めのタイムアウト
-    const timeoutId = setTimeout(() => {
-      cleanup();
-      reject(new Error('Safari JSONP timeout'));
-    }, 30000); // 30秒
+    url += params.join('&');
     
-    function cleanup() {
-      clearTimeout(timeoutId);
-      if (window[callbackName]) {
-        try {
-          delete window[callbackName];
-        } catch (e) {
-          window[callbackName] = undefined;
-        }
-      }
-      const script = document.getElementById(callbackName);
-      if (script && script.parentNode) {
-        try {
-          script.parentNode.removeChild(script);
-        } catch (e) {
-          console.warn('Failed to remove script element');
-        }
-      }
-    }
+    let isResolved = false;
     
-    // Safari用のコールバック関数
+    // グローバルコールバック関数
     window[callbackName] = function(result) {
-      console.log('Safari JSONP success:', result);
+      if (isResolved) return;
+      isResolved = true;
+      
+      console.log('JSONP success:', callbackName, result);
       cleanup();
       resolve(result);
     };
     
-    // スクリプト要素を作成
+    // クリーンアップ関数
+    function cleanup() {
+      try {
+        const script = document.getElementById(callbackName);
+        if (script && script.parentNode) {
+          script.parentNode.removeChild(script);
+        }
+      } catch (e) {
+        console.warn('Script cleanup failed:', e);
+      }
+      
+      try {
+        delete window[callbackName];
+      } catch (e) {
+        window[callbackName] = undefined;
+      }
+    }
+    
+    // タイムアウト設定
+    const timeoutId = setTimeout(() => {
+      if (isResolved) return;
+      isResolved = true;
+      
+      console.error('JSONP timeout:', callbackName);
+      cleanup();
+      reject(new Error('Request timeout after 30 seconds'));
+    }, 30000);
+    
+    // スクリプト要素作成
     const script = document.createElement('script');
     script.id = callbackName;
     script.type = 'text/javascript';
-    script.charset = 'utf-8';
     script.async = true;
+    script.charset = 'utf-8';
     
-    script.onerror = function(error) {
-      console.error('Safari JSONP script error:', error);
+    script.onerror = function(event) {
+      if (isResolved) return;
+      isResolved = true;
+      
+      console.error('JSONP script error:', event);
+      clearTimeout(timeoutId);
       cleanup();
-      reject(new Error('Safari JSONP script loading failed'));
+      reject(new Error('Script loading failed'));
     };
     
     script.onload = function() {
-      console.log('Safari JSONP script loaded');
+      console.log('JSONP script loaded:', callbackName);
     };
     
-    console.log('Safari JSONP request URL:', urlString);
-    script.src = urlString;
+    console.log('JSONP request URL:', url);
+    script.src = url;
     
-    // DOMに追加
+    // DOM に追加
     document.head.appendChild(script);
   });
 }
@@ -358,16 +335,32 @@ document.addEventListener('DOMContentLoaded', () => {
     // Safari用のテスト通信（3秒後）
     setTimeout(async () => {
       try {
-        console.log('Safari: 接続テスト開始');
-        const testResult = await callApi('GET', 'getItemInfo', { code: 'TEST' });
-        console.log('Safari: 接続テスト成功', testResult);
+        console.log('Safari connection test starting...');
+        
+        // まずシンプルなテストから
+        const testResult = await callApi('GET', 'test', { code: 'TEST' });
+        console.log('Safari connection test result:', testResult);
+        
+        if (testResult && (testResult.success || testResult.test)) {
+          console.log('✅ Safari GAS connection established successfully');
+        } else {
+          throw new Error('Invalid test response: ' + JSON.stringify(testResult));
+        }
+        
       } catch (error) {
-        console.error('Safari: 接続テスト失敗', error);
-        alert('Safari接続テストに失敗しました。\n' +
-              'Safariの設定で「サイト越えトラッキングを防ぐ」を無効にしてみてください。\n' +
-              'または、プライベートブラウジングモードをお試しください。');
+        console.error('❌ Safari connection test failed:', error);
+        
+        // より具体的な解決策
+        const solution = 
+          'Safari接続に失敗しました。以下をお試しください：\n\n' +
+          '1. Safari → 設定 → プライバシー → 「サイト越えトラッキングを防ぐ」をオフ\n' +
+          '2. Safari → プライベートブラウジングで開く\n' +
+          '3. 別のブラウザ（Chrome等）を使用\n\n' +
+          'これらの方法でも解決しない場合は、ネットワーク環境をご確認ください。';
+        
+        alert(solution);
       }
-    }, 3000);
+    }, 2000);
   }
   
   codeReader = new BrowserQRCodeReader(undefined, { delayBetweenScanAttempts: 200 });
