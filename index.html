@@ -188,35 +188,45 @@ select{
   /* ========== Apps Script のデプロイ URL ========== */
   const API_BASE_URL = 'https://script.google.com/macros/s/AKfycbzNCOQ99xODXBdE8JR2h9EkKhr1S73UBJfMwTnBh9t8F2A5DpY6BWn-DYym74q7cAVSGA/exec';
 
-  /* ========== API呼び出し用関数 ========== */
-  async function callApi(method, action, data = null) {
-    const url = new URL(API_BASE_URL);
-    if (method === 'GET') {
-      url.searchParams.append('action', action);
+async function callApi(method, action, data = null) {
+  if (method === 'GET') {
+    // JSONP方式でCORS回避
+    return new Promise((resolve, reject) => {
+      const callbackName = 'jsonp_callback_' + Date.now();
+      const url = new URL(API_BASE_URL);
+      url.searchParams.set('action', action);
       if (data) {
-        Object.entries(data).forEach(([key, value]) =>
-          url.searchParams.append(key, value));
+        Object.keys(data).forEach(key => url.searchParams.set(key, data[key]));
       }
-    }
-    const options = {
-      method,
-      mode: 'cors',
-      headers: {
-        'Content-Type': 'application/json',
-      }
-    };
-    if (method === 'POST') {
-      options.body = JSON.stringify({ action, ...data });
-    }
-    try {
-      const response = await fetch(url, options);
-      if (!response.ok) throw new Error('Network response was not ok');
-      return await response.json();
-    } catch (error) {
-      console.error('API Error:', error);
-      throw error;
-    }
+      url.searchParams.set('callback', callbackName);
+      
+      window[callbackName] = function(result) {
+        document.head.removeChild(script);
+        delete window[callbackName];
+        resolve(result);
+      };
+      
+      const script = document.createElement('script');
+      script.src = url.toString();
+      script.onerror = () => {
+        document.head.removeChild(script);
+        delete window[callbackName];
+        reject(new Error('JSONP request failed'));
+      };
+      document.head.appendChild(script);
+    });
+  } else {
+    // POST は従来通り
+    const response = await fetch(API_BASE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    if (!response.ok) throw new Error('Network response was not ok');
+    return await response.json();
   }
+}
+
 
   /* --- ZXing を取得（Safari12 互換：分割代入は使わない） --- */
   const BrowserQRCodeReader = ZXing.BrowserQRCodeReader;
