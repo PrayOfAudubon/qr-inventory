@@ -351,12 +351,15 @@ document.addEventListener('DOMContentLoaded', () => {
       console.log('GAS接続テスト開始...');
       
       // シンプルなテストリクエスト
-      const testResult = await callApi('GET', 'test', { code: 'TEST' });
+        const testResult = await callApi('GET', 'test', { code: 'TEST' });
       console.log('接続テスト結果:', testResult);
       
       if (testResult && (testResult.success || testResult.test)) {
         console.log('✅ GAS接続成功');
-        alert('接続テスト成功！システムは正常に動作します。');
+        
+        // アラートの代わりに画面上部に通知を表示
+        showConnectionSuccessNotification();
+        
       } else {
         throw new Error('Invalid test response: ' + JSON.stringify(testResult));
       }
@@ -364,10 +367,9 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (error) {
       console.error('❌ 接続テスト失敗:', error);
       
-      // 詳細なエラー情報
+      // エラー時のみアラート（重要な情報なので）
       alert(`接続テストに失敗しました。\n\nエラー: ${error.message}\n\nコンソールログを確認してください。`);
     }
-  }, 2000);
   
   codeReader = new BrowserQRCodeReader(undefined, { delayBetweenScanAttempts: 200 });
 
@@ -643,6 +645,45 @@ async function submitData(operation) {
     noBtn.textContent = 'いいえ';
     noBtn.onclick = () => { closePopup(); noCb && noCb(); };
   }
+  /* ---------- 接続成功通知 ---------- */
+function showConnectionSuccessNotification() {
+  // 通知バナー作成
+  const notification = document.createElement('div');
+  notification.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(90deg, #4caf50, #2e7d32);
+    color: white;
+    padding: 12px 20px;
+    text-align: center;
+    font-size: 16px;
+    font-weight: bold;
+    z-index: 9999;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    transform: translateY(-100%);
+    transition: transform 0.3s ease;
+  `;
+  notification.textContent = '✅ システム接続成功！正常に動作しています';
+  
+  document.body.appendChild(notification);
+  
+  // アニメーション表示
+  setTimeout(() => {
+    notification.style.transform = 'translateY(0)';
+  }, 100);
+  
+  // 3秒後に自動非表示
+  setTimeout(() => {
+    notification.style.transform = 'translateY(-100%)';
+    setTimeout(() => {
+      if (notification.parentNode) {
+        notification.parentNode.removeChild(notification);
+      }
+    }, 300);
+  }, 3000);
+}
 </script>
 </body>
 </html>
