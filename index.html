@@ -392,7 +392,23 @@ async function callApi(method, action, data = null) {
           quantity,
           mode: selectedMode
         };
+        
         const response = await callApi('POST', 'appendLog', data);
+
+        if (response.result === 'confirm') {
+        showConfirmPopup(
+          "確認",
+          response.message,
+          async () => {             // YES
+            data.confirmed = true;  // 確認フラグを付けて再送
+            response = await callApi('POST', 'appendLog', data);
+            handleFinalResponse(response);
+          },
+          returnToScanner           // NO
+        );
+        return;                     // いったん抜ける
+      }
+        
         if (response.result === 'success') {
           showPopup("更新完了", response.message, () => {
             document.getElementById("staffSelect").value = "";
@@ -411,6 +427,41 @@ async function callApi(method, action, data = null) {
       }
     });
   }
+  function handleFinalResponse(response){
+  if (response.result === 'success'){
+    showPopup("更新完了", response.message, () => {
+      /* 入力フォーム初期化など */
+      document.getElementById("staffSelect").value = "";
+      document.getElementById("quantitySelect").value = "";
+      document.getElementById("result").textContent = "";
+      document.getElementById("formArea").classList.add("hidden");
+      document.getElementById("itemNameDisplay").textContent = "";
+      CURRENT_TEXT = "";
+      resetModeUI();
+    });
+  } else {
+    showErrorPopup("エラー", response.message || "更新に失敗しました", returnToScanner);
+  }
+}
+  function showConfirmPopup(title, msg, yesCb, noCb){
+  document.getElementById('popupHeader').textContent = title;
+  document.getElementById('popupContent').textContent = msg;
+  document.getElementById('popupOverlay').style.display = 'flex';
+
+  // 「はい」ボタン（OK）を表示
+  const okBtn = document.getElementById('popupOkButton');
+  okBtn.style.display = 'inline-block';
+  okBtn.textContent = 'はい';
+  okBtn.onclick = () => { closePopup(); yesCb && yesCb(); };
+
+  // 「いいえ」ボタン（restart）を表示
+  const noBtn = document.getElementById('restartButton');
+  noBtn.style.display = 'inline-block';
+  noBtn.textContent = 'いいえ';
+  noBtn.onclick = () => { closePopup(); noCb && noCb(); };
+}
+
+
 </script>
 </body>
 </html>
