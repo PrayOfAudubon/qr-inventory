@@ -188,8 +188,11 @@ select{
   const API_BASE_URL = 'https://script.google.com/macros/s/AKfycbyX1-uptqS8n4lUtef9fRlhViMNX5pl_wzejAP5qfeR/dev';
 
 /* ========== Safari対応の改良版 callApi 関数 ========== */
-/* ========== 確実なSafari対応 callApi 関数 ========== */
 async function callApi(method, action, data = null) {
+  console.log('=== callApi呼び出し ===');
+  console.log('Method:', method);
+  console.log('Action:', action);
+  console.log('Data:', data);
   return new Promise((resolve, reject) => {
     const timestamp = Date.now();
     const random = Math.floor(Math.random() * 10000);
@@ -327,45 +330,43 @@ async function runSafariDiagnostics() {
   let currentStockVis   = 0;
   let preferredDeviceId = null; 
 
-/* ---------- ページロード後（Safari対応版） ---------- */
-  
+/* ---------- ページロード後（デバッグ版） ---------- */
 document.addEventListener('DOMContentLoaded', () => {
-  // Safari検出
-  const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+  // ブラウザ判定のデバッグ
+  const userAgent = navigator.userAgent;
+  const isSafari = /^((?!chrome|android).)*safari/i.test(userAgent);
   
-  if (isSafari) {
-    console.log('Safari detected, applying compatibility fixes');
-    
-    // Safari用のテスト通信（2秒後）
-    setTimeout(async () => {
-      try {
-        console.log('Safari connection test starting...');
-        
-        // シンプルなテストリクエスト
-        const testResult = await callApi('GET', 'test', { code: 'TEST' });
-        console.log('Safari connection test result:', testResult);
-        
-        if (testResult && (testResult.success || testResult.test)) {
-          console.log('✅ Safari GAS connection established successfully');
-        } else {
-          throw new Error('Invalid test response: ' + JSON.stringify(testResult));
-        }
-        
-      } catch (error) {
-        console.error('❌ Safari connection test failed:', error);
-        
-        // より具体的な解決策
-        const solution = 
-          'Safari接続に失敗しました。以下をお試しください：\n\n' +
-          '1. Safari → 設定 → プライバシー → 「サイト越えトラッキングを防ぐ」をオフ\n' +
-          '2. Safari → プライベートブラウジングで開く\n' +
-          '3. 別のブラウザ（Chrome等）を使用\n\n' +
-          'これらの方法でも解決しない場合は、ネットワーク環境をご確認ください。';
-        
-        alert(solution);
+  console.log('=== ブラウザ判定デバッグ ===');
+  console.log('User Agent:', userAgent);
+  console.log('Safari判定結果:', isSafari);
+  console.log('Chrome含む?:', userAgent.toLowerCase().includes('chrome'));
+  console.log('Safari含む?:', userAgent.toLowerCase().includes('safari'));
+  
+  // 強制的にテスト実行（全ブラウザで）
+  console.log('接続テスト開始（全ブラウザ対象）');
+  
+  setTimeout(async () => {
+    try {
+      console.log('GAS接続テスト開始...');
+      
+      // シンプルなテストリクエスト
+      const testResult = await callApi('GET', 'test', { code: 'TEST' });
+      console.log('接続テスト結果:', testResult);
+      
+      if (testResult && (testResult.success || testResult.test)) {
+        console.log('✅ GAS接続成功');
+        alert('接続テスト成功！システムは正常に動作します。');
+      } else {
+        throw new Error('Invalid test response: ' + JSON.stringify(testResult));
       }
-    }, 2000);
-  }
+      
+    } catch (error) {
+      console.error('❌ 接続テスト失敗:', error);
+      
+      // 詳細なエラー情報
+      alert(`接続テストに失敗しました。\n\nエラー: ${error.message}\n\nコンソールログを確認してください。`);
+    }
+  }, 2000);
   
   codeReader = new BrowserQRCodeReader(undefined, { delayBetweenScanAttempts: 200 });
 
