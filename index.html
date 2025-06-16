@@ -187,12 +187,13 @@ select{
   /* ========== Apps Script のデプロイ URL ========== */
   const API_BASE_URL = 'https://script.google.com/macros/s/AKfycbyX1-uptqS8n4lUtef9fRlhViMNX5pl_wzejAP5qfeR/dev';
 
-/* ========== Safari対応の改良版 callApi 関数 ========== */
+/* ========== 確実なSafari対応 callApi 関数 ========== */
 async function callApi(method, action, data = null) {
   console.log('=== callApi呼び出し ===');
   console.log('Method:', method);
   console.log('Action:', action);
   console.log('Data:', data);
+  
   return new Promise((resolve, reject) => {
     const timestamp = Date.now();
     const random = Math.floor(Math.random() * 10000);
