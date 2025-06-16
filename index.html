@@ -188,154 +188,175 @@ select{
   const API_BASE_URL = 'https://script.google.com/macros/s/AKfycbyX1-uptqS8n4lUtef9fRlhViMNX5pl_wzejAP5qfeR/dev';
 
 async function callApi(method, action, data = null) {
-  // Safari対応: fetch APIを使用したアプローチを試す
-  try {
-    // まずfetch APIを試す
-    let urlString = API_BASE_URL + '?action=' + encodeURIComponent(action);
-    
-    // パラメータを追加
-    if (data) {
-      Object.keys(data).forEach(key => {
-        if (key !== 'action') {
-          urlString += '&' + encodeURIComponent(key) + '=' + encodeURIComponent(data[key]);
-        }
-      });
-    }
-    
-    console.log('Safari: fetch APIで試行中...', urlString);
-    
-    const fetchResponse = await fetch(urlString, {
-      method: 'GET',
-      mode: 'cors',
-      credentials: 'omit'
-    });
-    
-    if (fetchResponse.ok) {
-      const result = await fetchResponse.json();
-      console.log('Safari: fetch API成功', result);
-      return result;
-    } else {
-      throw new Error('Fetch failed with status: ' + fetchResponse.status);
-    }
-    
-  } catch (fetchError) {
-    console.log('Safari: fetch APIが失敗、JSONPにフォールバック', fetchError);
-    
-    // fetch APIが失敗した場合、JSONPにフォールバック
-    return new Promise((resolve, reject) => {
-      const callbackName = 'safari_jsonp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5);
-      
-      // Safari用のシンプルなURL構築
-      let urlString = API_BASE_URL;
-      const params = [];
-      params.push('action=' + encodeURIComponent(action));
+  // Safari対応: より堅牢なアプローチ
+  const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+  
+  if (isSafari) {
+    console.log('Safari detected: using JSONP-only approach');
+    // SafariではJSONPのみを使用
+    return safariJsonpRequest(action, data);
+  } else {
+    // Chrome等ではFetch APIを試してからJSONPにフォールバック
+    try {
+      let urlString = API_BASE_URL + '?action=' + encodeURIComponent(action);
       
       if (data) {
         Object.keys(data).forEach(key => {
           if (key !== 'action') {
-            params.push(encodeURIComponent(key) + '=' + encodeURIComponent(data[key]));
+            urlString += '&' + encodeURIComponent(key) + '=' + encodeURIComponent(data[key]);
           }
         });
       }
       
-      params.push('callback=' + callbackName);
-      urlString += '?' + params.join('&');
+      const fetchResponse = await fetch(urlString, {
+        method: 'GET',
+        mode: 'cors',
+        credentials: 'omit'
+      });
       
-      // Safari用のタイムアウト（20秒）
-      const timeoutId = setTimeout(() => {
-        cleanup();
-        reject(new Error('Safari JSONP timeout after 20 seconds'));
-      }, 20000);
-      
-      function cleanup() {
-        clearTimeout(timeoutId);
-        if (window[callbackName]) {
-          try {
-            delete window[callbackName];
-          } catch (e) {
-            // Safari上でdelete演算子が失敗する場合があるため
-            window[callbackName] = undefined;
-          }
-        }
-        const script = document.getElementById('script_' + callbackName);
-        if (script && script.parentNode) {
-          script.parentNode.removeChild(script);
-        }
+      if (fetchResponse.ok) {
+        return await fetchResponse.json();
+      } else {
+        throw new Error('Fetch failed');
       }
-      
-      // Safari用のコールバック関数
-      window[callbackName] = function(result) {
-        console.log('Safari: JSONP コールバック実行', result);
-        cleanup();
-        resolve(result);
-      };
-      
-      // スクリプト要素を作成
-      const script = document.createElement('script');
-      script.id = 'script_' + callbackName;
-      script.type = 'text/javascript';
-      script.async = true;
-      script.charset = 'utf-8';
-      
-      script.onerror = function(error) {
-        console.error('Safari: JSONP スクリプトエラー', error);
-        cleanup();
-        reject(new Error('Safari JSONP script error'));
-      };
-      
-      // Safari用の追加処理
-      script.onload = function() {
-        console.log('Safari: JSONP スクリプト読み込み完了');
-        // 読み込み完了後、少し待ってからタイムアウトチェック
-        setTimeout(() => {
-          if (window[callbackName] && window[callbackName] !== undefined) {
-            console.warn('Safari: コールバックが実行されていない可能性があります');
-          }
-        }, 5000);
-      };
-      
-      console.log('Safari: JSONP リクエスト送信', urlString);
-      script.src = urlString;
-      
-      // DOMに追加
-      document.head.appendChild(script);
-    });
+    } catch (fetchError) {
+      console.log('Fetch failed, falling back to JSONP');
+      return safariJsonpRequest(action, data);
+    }
   }
 }
-/* ---------- Safari対応の初期化処理 ---------- */
-function initSafariCompatibility() {
-  // Safariの検出
-  const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
-  
-  if (isSafari) {
-    console.log('Safari detected, applying compatibility fixes');
+
+/* ========== Safari専用JSONP関数 ========== */
+function safariJsonpRequest(action, data) {
+  return new Promise((resolve, reject) => {
+    const timestamp = Date.now();
+    const callbackName = 'safari_cb_' + timestamp;
     
-    // Safari用のグローバル設定
-    window.safariCallbackIndex = 0;
+    // URLを手動で構築（より確実）
+    let urlString = API_BASE_URL + '?';
+    const params = [];
     
-    // Safari用のエラーハンドラー
-    window.addEventListener('error', function(event) {
-      if (event.filename && event.filename.includes('script.google.com')) {
-        console.error('Safari: GAS スクリプトエラー', event);
-      }
-    });
+    params.push('action=' + encodeURIComponent(action));
     
-    // Safari用のunload処理
-    window.addEventListener('beforeunload', function() {
-      // 未完了のJSONPコールバックをクリーンアップ
-      Object.keys(window).forEach(key => {
-        if (key.startsWith('safari_jsonp_') || key.startsWith('jsonp_callback_')) {
-          try {
-            delete window[key];
-          } catch (e) {
-            window[key] = undefined;
-          }
+    if (data) {
+      Object.keys(data).forEach(key => {
+        if (key !== 'action') {
+          params.push(encodeURIComponent(key) + '=' + encodeURIComponent(data[key]));
         }
       });
+    }
+    
+    params.push('callback=' + callbackName);
+    urlString += params.join('&');
+    
+    // Safari用の長めのタイムアウト
+    const timeoutId = setTimeout(() => {
+      cleanup();
+      reject(new Error('Safari JSONP timeout'));
+    }, 30000); // 30秒
+    
+    function cleanup() {
+      clearTimeout(timeoutId);
+      if (window[callbackName]) {
+        try {
+          delete window[callbackName];
+        } catch (e) {
+          window[callbackName] = undefined;
+        }
+      }
+      const script = document.getElementById(callbackName);
+      if (script && script.parentNode) {
+        try {
+          script.parentNode.removeChild(script);
+        } catch (e) {
+          console.warn('Failed to remove script element');
+        }
+      }
+    }
+    
+    // Safari用のコールバック関数
+    window[callbackName] = function(result) {
+      console.log('Safari JSONP success:', result);
+      cleanup();
+      resolve(result);
+    };
+    
+    // スクリプト要素を作成
+    const script = document.createElement('script');
+    script.id = callbackName;
+    script.type = 'text/javascript';
+    script.charset = 'utf-8';
+    script.async = true;
+    
+    script.onerror = function(error) {
+      console.error('Safari JSONP script error:', error);
+      cleanup();
+      reject(new Error('Safari JSONP script loading failed'));
+    };
+    
+    script.onload = function() {
+      console.log('Safari JSONP script loaded');
+    };
+    
+    console.log('Safari JSONP request URL:', urlString);
+    script.src = urlString;
+    
+    // DOMに追加
+    document.head.appendChild(script);
+  });
+}
+
+/* ========== 改良されたSafari接続テスト ========== */
+async function testSafariConnection() {
+  try {
+    console.log('Safari: 接続テスト開始');
+    
+    // まず簡単なテストから
+    const testResult = await safariJsonpRequest('getItemInfo', { code: 'TEST' });
+    console.log('Safari: 接続テスト成功', testResult);
+    
+    // 成功の場合はユーザーに通知しない（静かに成功）
+    
+  } catch (error) {
+    console.error('Safari: 接続テスト失敗', error);
+    
+    // より詳細なエラー診断
+    const diagnostics = await runSafariDiagnostics();
+    
+    if (diagnostics.hasInternet) {
+      alert('Safari設定の問題の可能性があります。\n' +
+            'Safariの設定で「サイト越えトラッキングを防ぐ」を無効にしてみてください。\n' +
+            'または、プライベートブラウジングモードをお試しください。');
+    } else {
+      alert('インターネット接続を確認してください。');
+    }
+  }
+}
+
+/* ========== Safari診断機能 ========== */
+async function runSafariDiagnostics() {
+  const diagnostics = {
+    hasInternet: false,
+    canReachGoogle: false,
+    userAgent: navigator.userAgent,
+    timestamp: new Date().toISOString()
+  };
+  
+  try {
+    // インターネット接続テスト
+    const testResponse = await fetch('https://www.google.com/favicon.ico', {
+      method: 'HEAD',
+      mode: 'no-cors',
+      cache: 'no-cache'
     });
+    diagnostics.hasInternet = true;
+    diagnostics.canReachGoogle = true;
+  } catch (e) {
+    console.log('Internet connectivity test failed:', e);
   }
   
-  return isSafari;
+  console.log('Safari diagnostics:', diagnostics);
+  return diagnostics;
 }
 
   /* --- ZXing を取得（Safari12 互換：分割代入は使わない） --- */
@@ -368,14 +389,14 @@ document.addEventListener('DOMContentLoaded', () => {
             if (f) decodeFromFile(f);
   });
   
-  // Safari用の追加設定
+  // Safari用の設定（少し遅らせる）
   if (isSafari) {
     console.log('Safari用設定を適用中...');
     
-    // Safari用のテスト通信
+    // Safari用のテスト通信（3秒後）
     setTimeout(() => {
       testSafariConnection();
-    }, 1000);
+    }, 3000);
   }
 });
 
@@ -433,8 +454,7 @@ async function testSafariConnection() {
     }
   }
 
-  /* ---------- 読み取り成功時の処理（API版） ---------- */
-/* ---------- 読み取り成功時の処理（Safari対応版） ---------- */
+/* ========== 改良されたonScanSuccess ========== */
 async function onScanSuccess(decodedText) {
   if (CURRENT_TEXT === decodedText) return;
   CURRENT_TEXT = decodedText;
@@ -443,15 +463,18 @@ async function onScanSuccess(decodedText) {
   document.getElementById("codeDisplay").textContent = decodedText;
 
   try {
-    // Safari用: 少し待ってからAPIを呼び出す
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    console.log('Safari: アイテム情報取得開始', decodedText);
+    console.log('アイテム情報取得開始', decodedText);
     const info = await callApi('GET', 'getItemInfo', { code: decodedText });
-    console.log('Safari: アイテム情報取得結果', info);
+    console.log('アイテム情報取得結果', info);
     
-    if (!info || !info.name) {
-      console.error('Safari: アイテム情報が見つかりません', info);
+    if (!info || (!info.name && !info.error)) {
+      console.error('予期しない応答形式', info);
+      showErrorPopup("エラー", "サーバーから予期しない応答がありました", returnToScanner);
+      return;
+    }
+    
+    if (info.error || !info.name) {
+      console.log('アイテムが見つかりません', info);
       showErrorPopup("エラー", "コードがデータベースに存在しません", returnToScanner);
       return;
     }
@@ -462,15 +485,19 @@ async function onScanSuccess(decodedText) {
     document.getElementById("itemNameDisplay").textContent = info.name;
     document.getElementById("stockDisplay").textContent = "";
     
-    console.log('Safari: アイテム情報設定完了', {
+    console.log('アイテム情報設定完了', {
       name: currentItemName,
       stockOut: currentStockOut,
       stockVis: currentStockVis
     });
     
   } catch (error) {
-    console.error('Safari: データ取得エラー', error);
-    showErrorPopup("エラー", "データの取得に失敗しました（Safari互換性問題の可能性があります）", returnToScanner);
+    console.error('データ取得エラー', error);
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+    const errorMsg = isSafari 
+      ? "Safari通信エラー：設定を確認してください" 
+      : "データの取得に失敗しました";
+    showErrorPopup("エラー", errorMsg, returnToScanner);
   }
 }
 
