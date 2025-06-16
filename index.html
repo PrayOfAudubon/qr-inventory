@@ -187,6 +187,7 @@ select{
   /* ========== Apps Script のデプロイ URL ========== */
   const API_BASE_URL = 'https://script.google.com/macros/s/AKfycbyX1-uptqS8n4lUtef9fRlhViMNX5pl_wzejAP5qfeR/dev';
 
+/* ========== Safari対応の改良版 callApi 関数 ========== */
 async function callApi(method, action, data = null) {
   // Safari対応: より堅牢なアプローチ
   const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
@@ -224,6 +225,86 @@ async function callApi(method, action, data = null) {
       return safariJsonpRequest(action, data);
     }
   }
+}
+
+/* ========== Safari専用JSONP関数 ========== */
+function safariJsonpRequest(action, data) {
+  return new Promise((resolve, reject) => {
+    const timestamp = Date.now();
+    const callbackName = 'safari_cb_' + timestamp;
+    
+    // URLを手動で構築（より確実）
+    let urlString = API_BASE_URL + '?';
+    const params = [];
+    
+    params.push('action=' + encodeURIComponent(action));
+    
+    if (data) {
+      Object.keys(data).forEach(key => {
+        if (key !== 'action') {
+          params.push(encodeURIComponent(key) + '=' + encodeURIComponent(data[key]));
+        }
+      });
+    }
+    
+    params.push('callback=' + callbackName);
+    urlString += params.join('&');
+    
+    // Safari用の長めのタイムアウト
+    const timeoutId = setTimeout(() => {
+      cleanup();
+      reject(new Error('Safari JSONP timeout'));
+    }, 30000); // 30秒
+    
+    function cleanup() {
+      clearTimeout(timeoutId);
+      if (window[callbackName]) {
+        try {
+          delete window[callbackName];
+        } catch (e) {
+          window[callbackName] = undefined;
+        }
+      }
+      const script = document.getElementById(callbackName);
+      if (script && script.parentNode) {
+        try {
+          script.parentNode.removeChild(script);
+        } catch (e) {
+          console.warn('Failed to remove script element');
+        }
+      }
+    }
+    
+    // Safari用のコールバック関数
+    window[callbackName] = function(result) {
+      console.log('Safari JSONP success:', result);
+      cleanup();
+      resolve(result);
+    };
+    
+    // スクリプト要素を作成
+    const script = document.createElement('script');
+    script.id = callbackName;
+    script.type = 'text/javascript';
+    script.charset = 'utf-8';
+    script.async = true;
+    
+    script.onerror = function(error) {
+      console.error('Safari JSONP script error:', error);
+      cleanup();
+      reject(new Error('Safari JSONP script loading failed'));
+    };
+    
+    script.onload = function() {
+      console.log('Safari JSONP script loaded');
+    };
+    
+    console.log('Safari JSONP request URL:', urlString);
+    script.src = urlString;
+    
+    // DOMに追加
+    document.head.appendChild(script);
+  });
 }
 
 /* ========== Safari専用JSONP関数 ========== */
@@ -374,9 +455,28 @@ async function runSafariDiagnostics() {
 
   /* ---------- ページロード後 ---------- */
 /* ---------- ページロード後（Safari対応版） ---------- */
+/* ---------- ページロード後（Safari対応版） ---------- */
 document.addEventListener('DOMContentLoaded', () => {
-  // Safari互換性の初期化
-  const isSafari = initSafariCompatibility();
+  // Safari検出
+  const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+  
+  if (isSafari) {
+    console.log('Safari detected, applying compatibility fixes');
+    
+    // Safari用のテスト通信（3秒後）
+    setTimeout(async () => {
+      try {
+        console.log('Safari: 接続テスト開始');
+        const testResult = await callApi('GET', 'getItemInfo', { code: 'TEST' });
+        console.log('Safari: 接続テスト成功', testResult);
+      } catch (error) {
+        console.error('Safari: 接続テスト失敗', error);
+        alert('Safari接続テストに失敗しました。\n' +
+              'Safariの設定で「サイト越えトラッキングを防ぐ」を無効にしてみてください。\n' +
+              'または、プライベートブラウジングモードをお試しください。');
+      }
+    }, 3000);
+  }
   
   codeReader = new BrowserQRCodeReader(undefined, { delayBetweenScanAttempts: 200 });
 
@@ -388,16 +488,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const f = e.target.files[0];
             if (f) decodeFromFile(f);
   });
-  
-  // Safari用の設定（少し遅らせる）
-  if (isSafari) {
-    console.log('Safari用設定を適用中...');
-    
-    // Safari用のテスト通信（3秒後）
-    setTimeout(() => {
-      testSafariConnection();
-    }, 3000);
-  }
 });
 
 /* ---------- Safari接続テスト ---------- */
