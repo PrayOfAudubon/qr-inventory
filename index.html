@@ -205,8 +205,22 @@ async function callApi(method, action, data = null) {
     
     url.searchParams.set('callback', callbackName);
     
+    // タイムアウト設定（10秒）
+    const timeoutId = setTimeout(() => {
+      if (window[callbackName]) {
+        delete window[callbackName];
+        if (document.head.contains(script)) {
+          document.head.removeChild(script);
+        }
+        reject(new Error('Request timeout'));
+      }
+    }, 10000);
+    
     window[callbackName] = function(result) {
-      document.head.removeChild(script);
+      clearTimeout(timeoutId);
+      if (document.head.contains(script)) {
+        document.head.removeChild(script);
+      }
       delete window[callbackName];
       resolve(result);
     };
@@ -214,10 +228,17 @@ async function callApi(method, action, data = null) {
     const script = document.createElement('script');
     script.src = url.toString();
     script.onerror = () => {
-      document.head.removeChild(script);
+      clearTimeout(timeoutId);
+      if (document.head.contains(script)) {
+        document.head.removeChild(script);
+      }
       delete window[callbackName];
       reject(new Error('JSONP request failed'));
     };
+    
+    // デバッグ用：リクエストURLをログ出力
+    console.log('API Request URL:', url.toString());
+    
     document.head.appendChild(script);
   });
 }
@@ -372,33 +393,35 @@ async function callApi(method, action, data = null) {
   }
 
   /* ---------- データ送信 ---------- */
-  async function submitData(operation) {
-    const staff = document.getElementById("staffSelect").value;
-    const quantity = document.getElementById("quantitySelect").value;
+/* ---------- データ送信 ---------- */
+async function submitData(operation) {
+  const staff = document.getElementById("staffSelect").value;
+  const quantity = document.getElementById("quantitySelect").value;
 
-    if (!staff || !quantity || !selectedMode) {
-      alert("スタッフ名・数量・用途（外来/訪問）を選択してください！");
-      return;
-    }
+  if (!staff || !quantity || !selectedMode) {
+    alert("スタッフ名・数量・用途（外来/訪問）を選択してください！");
+    return;
+  }
 
-    const confirmMsg = `${currentItemName} を ${quantity}個、${operation} しますか？`;
-    showPopup("確認", confirmMsg, async () => {
-      try {
-        const data = {
-          code: CURRENT_TEXT,
-          operation,
-          staff,
-          quantity,
-          mode: selectedMode
-        };
-        
-        let response = await callApi('GET', 'appendLog', data);
+  const confirmMsg = `${currentItemName} を ${quantity}個、${operation} しますか？`;
+  showPopup("確認", confirmMsg, async () => {
+    try {
+      const data = {
+        code: CURRENT_TEXT,
+        operation,
+        staff,
+        quantity,
+        mode: selectedMode
+      };
+      
+      let response = await callApi('GET', 'appendLog', data);
 
-        if (response.result === 'confirm') {
-          showConfirmPopup(
-            "確認",
-            response.message,
-            async () => {             // YES
+      if (response.result === 'confirm') {
+        showConfirmPopup(
+          "確認",
+          response.message,
+          async () => {             // YES
+            try {
               // 確認フラグを付けて再送信
               const confirmedData = {
                 code: CURRENT_TEXT,
@@ -410,30 +433,35 @@ async function callApi(method, action, data = null) {
               };
               const confirmedResponse = await callApi('GET', 'appendLog', confirmedData);
               handleFinalResponse(confirmedResponse);
-            },
-            returnToScanner           // NO
-          );
-          return;                     // いったん抜ける
-        }
-        
-        if (response.result === 'success') {
-          showPopup("更新完了", response.message, () => {
-            document.getElementById("staffSelect").value = "";
-            document.getElementById("quantitySelect").value = "";
-            document.getElementById("result").textContent = "";
-            document.getElementById("formArea").classList.add("hidden");
-            document.getElementById("itemNameDisplay").textContent = "";
-            CURRENT_TEXT = "";
-            resetModeUI();
-          });
-        } else {
-          showErrorPopup("エラー", response.message || "更新に失敗しました", returnToScanner);
-        }
-      } catch (error) {
-        showErrorPopup("エラー", "サーバーとの通信に失敗しました", returnToScanner);
+            } catch (error) {
+              console.error('確認後のAPI呼び出しエラー:', error);
+              showErrorPopup("エラー", "サーバーとの通信に失敗しました", returnToScanner);
+            }
+          },
+          returnToScanner           // NO
+        );
+        return;                     // いったん抜ける
       }
-    });
-  }
+      
+      if (response.result === 'success') {
+        showPopup("更新完了", response.message, () => {
+          document.getElementById("staffSelect").value = "";
+          document.getElementById("quantitySelect").value = "";
+          document.getElementById("result").textContent = "";
+          document.getElementById("formArea").classList.add("hidden");
+          document.getElementById("itemNameDisplay").textContent = "";
+          CURRENT_TEXT = "";
+          resetModeUI();
+        });
+      } else {
+        showErrorPopup("エラー", response.message || "更新に失敗しました", returnToScanner);
+      }
+    } catch (error) {
+      console.error('初回API呼び出しエラー:', error);
+      showErrorPopup("エラー", "サーバーとの通信に失敗しました", returnToScanner);
+    }
+  });
+}
   
   function handleFinalResponse(response){
     if (response.result === 'success'){
