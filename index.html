@@ -146,20 +146,19 @@ select{
         <option value="高原">高原</option><option value="村岡">村岡</option>
       </select>
 
-      <p class="label">数量</p>
-      <select id="quantitySelect">
-        <option value="">--選択してください--</option>
-        <option value="1">1</option>
-        <option value="2">2</option>
-        <option value="3">3</option>
-        <option value="4">4</option>
-        <option value="5">5</option>
-        <option value="6">6</option>
-        <option value="7">7</option>
-        <option value="8">8</option>
-        <option value="9">9</option>
-        <option value="10">10</option>
-      </select>
+      <!-- 数量 -->
+      <label for="quantityInput" class="label">数量</label>
+      <input
+        id="quantityInput"
+        type="number"
+        inputmode="numeric"   <!-- モバイルで数値キーボードを表示 -->
+        min="1"               <!-- 1 以上 -->
+        step="1"              <!-- 整数のみ -->
+        placeholder="数量を入力"
+        required              <!-- 未入力を防止 -->
+        onwheel="return false;"  <!-- マウスホイールで値が変わるのを防止 -->
+      />
+
 
       <p class="label">操作種別</p>
       <button class="btn" onclick="submitData('入庫')">入庫</button>
@@ -545,7 +544,24 @@ async function onScanSuccess(decodedText) {
 /* ---------- データ送信 ---------- */
 async function submitData(operation) {
   const staff = document.getElementById("staffSelect").value;
-  const quantity = document.getElementById("quantitySelect").value;
+  const qtyInput = document.getElementById('quantityInput');
+
+  function getQuantity() {
+    const val = qtyInput.value.trim();       // 文字列
+    const quantity = Number(val);            // 数値に変換
+  
+    // バリデーション: 整数 & 1以上
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      alert('数量は 1 以上の整数で入力してください');
+      qtyInput.focus();
+      return null;
+    }
+    return quantity;
+  }
+  
+  function handleSubmit() {
+  const quantity = getQuantity();
+  if (quantity === null) return;  // バリデーション NG
 
   if (!staff || !quantity || !selectedMode) {
     alert("スタッフ名・数量・用途（外来/訪問）を選択してください！");
