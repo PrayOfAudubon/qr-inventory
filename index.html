@@ -46,7 +46,7 @@ main{width:100vw;padding:24px;box-sizing:border-box;}
 #stockDisplay.zero{color:#e91e63;animation:blink 1s steps(2,start) infinite;}
 @keyframes blink{to{visibility:hidden;}}
 
-/* ========== セレクト・ボタン ========== */
+/* ========== セレクト・ボタン・インプット ========== */
 select, input[type="number"]{
   width:100%;padding:18px;font-size:22px;border-radius:14px;
   border:1px solid #ccc;margin:22px 0 0;box-shadow:inset 0 1px 2px rgba(0,0,0,.04);
@@ -558,6 +558,15 @@ async function submitData(operation) {
     }
     return quantity;
   }
+  
+  // 数量を取得・バリデーション
+  const quantity = getQuantity();
+  if (quantity === null) return;  // バリデーション NG
+
+  if (!staff || !quantity || !selectedMode) {
+    alert("スタッフ名・数量・用途（外来/訪問）を選択してください！");
+    return;
+  }
 
   const confirmMsg = `${currentItemName} を ${quantity}個、${operation} しますか？`;
   showPopup("確認", confirmMsg, async () => {
@@ -602,7 +611,7 @@ async function submitData(operation) {
       if (response.result === 'success') {
         showPopup("更新完了", response.message, () => {
           document.getElementById("staffSelect").value = "";
-          document.getElementById("quantitySelect").value = "";
+          document.getElementById("quantityInput").value = "";  // quantitySelect → quantityInput に修正
           document.getElementById("result").textContent = "";
           document.getElementById("formArea").classList.add("hidden");
           document.getElementById("itemNameDisplay").textContent = "";
@@ -624,7 +633,7 @@ async function submitData(operation) {
       showPopup("更新完了", response.message, () => {
         /* 入力フォーム初期化など */
         document.getElementById("staffSelect").value = "";
-        document.getElementById("quantitySelect").value = "";
+        document.getElementById("quantityInput").value = "";  // quantitySelect → quantityInput に修正
         document.getElementById("result").textContent = "";
         document.getElementById("formArea").classList.add("hidden");
         document.getElementById("itemNameDisplay").textContent = "";
