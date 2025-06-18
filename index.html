@@ -370,6 +370,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // エラー時のみアラート（重要な情報なので）
       alert(`接続テストに失敗しました。\n\nエラー: ${error.message}\n\nコンソールログを確認してください。`);
     }
+   }, 2000); 
   
   codeReader = new BrowserQRCodeReader(undefined, { delayBetweenScanAttempts: 200 });
 
