@@ -541,7 +541,6 @@ async function onScanSuccess(decodedText) {
   }
 
   /* ---------- データ送信 ---------- */
-/* ---------- データ送信 ---------- */
 async function submitData(operation) {
   const staff = document.getElementById("staffSelect").value;
   const qtyInput = document.getElementById('quantityInput');
@@ -557,15 +556,6 @@ async function submitData(operation) {
       return null;
     }
     return quantity;
-  }
-  
-  function handleSubmit() {
-  const quantity = getQuantity();
-  if (quantity === null) return;  // バリデーション NG
-
-  if (!staff || !quantity || !selectedMode) {
-    alert("スタッフ名・数量・用途（外来/訪問）を選択してください！");
-    return;
   }
 
   const confirmMsg = `${currentItemName} を ${quantity}個、${operation} しますか？`;
