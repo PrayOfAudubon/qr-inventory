@@ -16,7 +16,6 @@ body{
   -moz-user-select: none;
   -ms-user-select: none;
   user-select: none;
-  touch-action: manipulation;
 }
 header{
   background:linear-gradient(90deg,#42a5f5,#1e88e5);
@@ -64,7 +63,6 @@ select, input[type="number"]{
   color:#fff;border:none;border-radius:32px;cursor:pointer;
   background:linear-gradient(90deg,#42a5f5,#1e88e5);
   box-shadow:0 4px 6px rgba(0,0,0,.1);transition:transform .1s ease;
-  touch-action: manipulation;
   -webkit-appearance: none;
   -webkit-tap-highlight-color: transparent;
 }
@@ -84,7 +82,6 @@ select, input[type="number"]{
 .popup-overlay{
   position:fixed;inset:0;background:rgba(0,0,0,.6);
   display:none;justify-content:center;align-items:center;z-index:1000;
-  touch-action: none;
 }
 .popup{
   background:#fff;border-radius:20px;padding:28px;width:90%;max-width:420px;
@@ -96,7 +93,6 @@ select, input[type="number"]{
 .popup-button,.popup-close{
   background:#42a5f5;border:none;color:#fff;padding:16px 28px;font-size:22px;
   border-radius:32px;cursor:pointer;margin:8px 0;
-  touch-action: manipulation;
   -webkit-appearance: none;
   -webkit-tap-highlight-color: transparent;
 }
@@ -108,17 +104,50 @@ select, input[type="number"]{
 .popup-close:hover{color:#666;}
 
 /* iPad調整 */
-@media (pointer: coarse) {
+@media (min-width: 768px) {
   .popup {
-    transform: translateZ(0);
     padding-top: 40px;
   }
   .popup-button {
     padding: 20px 30px;
+    font-size: 24px;
   }
 }
 
 .hidden{display:none!important;}
+
+/* 処理中のインジケータ */
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(255, 255, 255, 0.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 2000;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.3s, visibility 0.3s;
+}
+.loading-overlay.active {
+  opacity: 1;
+  visibility: visible;
+}
+.loading-spinner {
+  width: 50px;
+  height: 50px;
+  border: 5px solid #f3f3f3;
+  border-top: 5px solid #3498db;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
 
   </style>
 </head>
@@ -190,8 +219,8 @@ select, input[type="number"]{
 
 
       <p class="label">操作種別</p>
-      <button class="btn" onclick="submitData('入庫')">入庫</button>
-      <button class="btn" onclick="submitData('出庫')">出庫</button>
+      <button class="btn action-btn" data-operation="入庫">入庫</button>
+      <button class="btn action-btn" data-operation="出庫">出庫</button>
       <button class="btn" onclick="returnToScanner()">カメラ画面へ戻る</button>
     </div>
 
@@ -204,6 +233,11 @@ select, input[type="number"]{
         <button class="popup-button" id="popupOkButton">OK</button>
         <button class="popup-button" id="restartButton" style="display:none;">QR読み取り画面に戻る</button>
       </div>
+    </div>
+    
+    <!-- 処理中インジケータ -->
+    <div class="loading-overlay" id="loadingOverlay">
+      <div class="loading-spinner"></div>
     </div>
   </main>
 
@@ -377,12 +411,8 @@ document.addEventListener('DOMContentLoaded', () => {
   console.log('Chrome含む?:', userAgent.toLowerCase().includes('chrome'));
   console.log('Safari含む?:', userAgent.toLowerCase().includes('safari'));
   
-  // touchmove イベントのデフォルト動作を防ぐ（iPadでのスクロールを抑制）
-  document.addEventListener('touchmove', function(e) {
-    if (document.getElementById('popupOverlay').style.display === 'flex') {
-      e.preventDefault();
-    }
-  }, { passive: false });
+  // イベントリスナーのセットアップ
+  setupEventListeners();
   
   // codeReaderの初期化
   initCodeReader();
@@ -415,17 +445,39 @@ document.addEventListener('DOMContentLoaded', () => {
       alert(`接続テストに失敗しました。\n\nエラー: ${error.message}\n\nコンソールログを確認してください。`);
     }
    }, 2000);
-
-  // イベントリスナーの登録
-  document.getElementById('startCameraBtn')
-          .addEventListener('click', startScanner);
-
-  document.getElementById('fileInput')
-          .addEventListener('change', e => {
-            const f = e.target.files[0];
-            if (f) decodeFromFile(f);
-  });
 });
+
+// イベントリスナーのセットアップ
+function setupEventListeners() {
+  // カメラ起動ボタン
+  document.getElementById('startCameraBtn').addEventListener('click', startScanner);
+  
+  // ファイル入力
+  document.getElementById('fileInput').addEventListener('change', e => {
+    const f = e.target.files[0];
+    if (f) decodeFromFile(f);
+  });
+  
+  // 入出庫ボタン
+  document.querySelectorAll('.action-btn').forEach(btn => {
+    btn.addEventListener('click', function(e) {
+      e.preventDefault();
+      const operation = this.dataset.operation;
+      if (operation) {
+        submitData(operation);
+      }
+    });
+  });
+}
+
+// ローディング表示
+function showLoading() {
+  document.getElementById('loadingOverlay').classList.add('active');
+}
+
+function hideLoading() {
+  document.getElementById('loadingOverlay').classList.remove('active');
+}
 
 // codeReaderの初期化関数
 function initCodeReader() {
@@ -495,9 +547,9 @@ function stopCameraStream() {
 async function startScanner() {
   console.log('startScanner()が呼び出されました');
   
-  // 処理中なら無視
+  // 処理中ならスキップ
   if (isProcessing) {
-    console.log('処理中のため無視します');
+    console.log('別の処理が実行中です');
     return;
   }
   
@@ -513,9 +565,10 @@ async function startScanner() {
     return document.getElementById('fileInput').click();
   }
   
-  isProcessing = true;
-  
   try {
+    isProcessing = true;
+    showLoading();
+    
     // 古いカメラストリームを完全に停止
     stopCameraStream();
     
@@ -667,6 +720,9 @@ async function startScanner() {
         errorDisplayed = true;
         showErrorPopup("カメラエラー", errorMsg, resetScannerState);
       }
+    }).finally(() => {
+      hideLoading();
+      isProcessing = false;
     });
     
   } catch (e) {
@@ -675,7 +731,7 @@ async function startScanner() {
     document.getElementById('startCameraBtn').classList.remove('hidden');
     document.getElementById('result').textContent = "カメラ接続エラー";
     showErrorPopup("エラー", "カメラの起動に失敗しました。ページを再読み込みしてお試しください。", resetScannerState);
-  } finally {
+    hideLoading();
     isProcessing = false;
   }
 }
@@ -696,11 +752,18 @@ function resetScannerState() {
 
   /* ---------- 画像ファイル読み取り ---------- */
   async function decodeFromFile (file) {
+    if (isProcessing) return;
+    
     try {
+      isProcessing = true;
+      showLoading();
       const r = await codeReader.decodeFromImage(file);
       onScanSuccess(r.getText());
     } catch (e) {
       alert('画像から QR を検出できませんでした');
+    } finally {
+      hideLoading();
+      isProcessing = false;
     }
   }
 
@@ -710,27 +773,28 @@ async function onScanSuccess(decodedText) {
   
   // 処理中なら無視
   if (isProcessing) return;
-  isProcessing = true;
   
-  // 重複処理防止（同じQRを連続で読み取った場合）
-  if (CURRENT_TEXT === decodedText) {
-    isProcessing = false;
-    return;
-  }
-  
-  // スキャナーのリセット・停止
-  stopCameraStream();
-  
-  // 結果表示
-  CURRENT_TEXT = decodedText;
-  document.getElementById("result").textContent = `QRコード読み取り完了: ${decodedText}`;
-  document.getElementById("codeDisplay").textContent = decodedText;
-  
-  // UI表示切替
-  document.getElementById("reader").classList.add("hidden");
-  document.getElementById("formArea").classList.remove("hidden");
-
   try {
+    isProcessing = true;
+    showLoading();
+    
+    // 重複処理防止（同じQRを連続で読み取った場合）
+    if (CURRENT_TEXT === decodedText) {
+      return;
+    }
+    
+    // スキャナーのリセット・停止
+    stopCameraStream();
+    
+    // 結果表示
+    CURRENT_TEXT = decodedText;
+    document.getElementById("result").textContent = `QRコード読み取り完了: ${decodedText}`;
+    document.getElementById("codeDisplay").textContent = decodedText;
+    
+    // UI表示切替
+    document.getElementById("reader").classList.add("hidden");
+    document.getElementById("formArea").classList.remove("hidden");
+
     console.log('アイテム情報取得開始', decodedText);
     const info = await callApi('GET', 'getItemInfo', { code: decodedText });
     console.log('アイテム情報取得結果', info);
@@ -738,14 +802,12 @@ async function onScanSuccess(decodedText) {
     if (!info || (!info.name && !info.error)) {
       console.error('予期しない応答形式', info);
       showErrorPopup("エラー", "サーバーから予期しない応答がありました", returnToScanner);
-      isProcessing = false;
       return;
     }
     
     if (info.error || !info.name) {
       console.log('アイテムが見つかりません', info);
       showErrorPopup("エラー", "コードがデータベースに存在しません", returnToScanner);
-      isProcessing = false;
       return;
     }
     
@@ -769,6 +831,7 @@ async function onScanSuccess(decodedText) {
       : "データの取得に失敗しました";
     showErrorPopup("エラー", errorMsg, returnToScanner);
   } finally {
+    hideLoading();
     isProcessing = false;
   }
 }
@@ -799,7 +862,7 @@ async function onScanSuccess(decodedText) {
   }
 
   /* ---------- ポップアップ (改良版) ---------- */
-  function showPopup(title,msg,okCb){
+  function showPopup(title, msg, okCb) {
     document.getElementById('popupHeader').textContent = title;
     document.getElementById('popupContent').textContent = msg;
     
@@ -814,34 +877,26 @@ async function onScanSuccess(decodedText) {
       okBtn.style.padding = '20px 40px';
     }
     
-    // イベントリスナー設定（複数付かないように一度削除）
-    okBtn.onclick = null;
-    okBtn.addEventListener('click', function(event) {
-      event.preventDefault();
-      event.stopPropagation();
+    // イベントリスナーをクリア
+    const newOkBtn = okBtn.cloneNode(true);
+    okBtn.parentNode.replaceChild(newOkBtn, okBtn);
+    
+    // 新しいイベントリスナーを設定
+    newOkBtn.addEventListener('click', function() {
       closePopup();
-      if (okCb) setTimeout(okCb, 50);
-    }, { once: true });
+      if (okCb) setTimeout(okCb, 30);
+    });
     
     // ポップアップ表示
     document.getElementById('popupOverlay').style.display = 'flex';
-    
-    // 少しズレてUIを更新（レンダリングを強制）
-    setTimeout(() => {
-      document.getElementById('popupOverlay').style.opacity = '0.99';
-      setTimeout(() => {
-        document.getElementById('popupOverlay').style.opacity = '1';
-      }, 10);
-    }, 10);
   }
   
-  function showErrorPopup(title,msg,okCb){
+  function showErrorPopup(title, msg, okCb) {
     document.getElementById('popupHeader').textContent = title;
     document.getElementById('popupContent').textContent = msg;
     
     // ボタン設定
-    const okBtn = document.getElementById('popupOkButton');
-    okBtn.style.display = 'none';
+    document.getElementById('popupOkButton').style.display = 'none';
     const restartBtn = document.getElementById('restartButton');
     restartBtn.style.display = 'inline-block';
     restartBtn.textContent = 'QR読み取り画面に戻る';
@@ -852,249 +907,227 @@ async function onScanSuccess(decodedText) {
       restartBtn.style.padding = '20px 40px';
     }
     
-    // イベントリスナー設定（複数付かないように一度削除）
-    restartBtn.onclick = null;
-    restartBtn.addEventListener('click', function(event) {
-      event.preventDefault();
-      event.stopPropagation();
+    // イベントリスナーをクリア
+    const newRestartBtn = restartBtn.cloneNode(true);
+    restartBtn.parentNode.replaceChild(newRestartBtn, restartBtn);
+    
+    // 新しいイベントリスナーを設定
+    newRestartBtn.addEventListener('click', function() {
       closePopup();
-      if (okCb) setTimeout(okCb, 50);
-    }, { once: true });
+      if (okCb) setTimeout(okCb, 30);
+    });
     
     // ポップアップ表示
     document.getElementById('popupOverlay').style.display = 'flex';
-    
-    // 少しズレてUIを更新（レンダリングを強制）
-    setTimeout(() => {
-      document.getElementById('popupOverlay').style.opacity = '0.99';
-      setTimeout(() => {
-        document.getElementById('popupOverlay').style.opacity = '1';
-      }, 10);
-    }, 10);
   }
   
-  function closePopup(){
-    const overlay = document.getElementById('popupOverlay');
-    overlay.style.opacity = '0.99';
-    
-    setTimeout(() => {
-      overlay.style.display = 'none';
-      overlay.style.opacity = '1';
-    }, 50);
+  function closePopup() {
+    document.getElementById('popupOverlay').style.display = 'none';
   }
 
   /* ---------- カメラ画面へ戻る (完全改良版) ---------- */
-  function returnToScanner(){
+  function returnToScanner() {
     console.log('returnToScannerが呼び出されました');
     
     // 処理中なら無視
     if (isProcessing) return;
-    isProcessing = true;
     
-    // UI状態をリセット
-    document.getElementById("formArea").classList.add("hidden");
-    document.getElementById("reader").classList.remove("hidden");
-    document.getElementById("result").textContent = "カメラ接続中...";
-    document.getElementById("itemNameDisplay").textContent = "";
-    CURRENT_TEXT = "";
-    resetModeUI();
-    
-    // 古いカメラストリームを完全に停止してから再度初期化
-    stopCameraStream();
-    
-    // カメラの動作環境が完全にクリーンアップされるのを待ってから再起動
-    setTimeout(() => {
-      // codeReaderを再初期化
-      initCodeReader();
+    try {
+      isProcessing = true;
+      showLoading();
       
-      // 遅延をさらに入れてカメラを再起動
+      // UI状態をリセット
+      document.getElementById("formArea").classList.add("hidden");
+      document.getElementById("reader").classList.remove("hidden");
+      document.getElementById("result").textContent = "カメラ接続中...";
+      document.getElementById("itemNameDisplay").textContent = "";
+      CURRENT_TEXT = "";
+      resetModeUI();
+      
+      // 古いカメラストリームを完全に停止してから再度初期化
+      stopCameraStream();
+      
+      // タイマーを使って段階的に初期化
       setTimeout(() => {
-        console.log('カメラを再起動します');
-        isProcessing = false;
-        startScanner();
-      }, 300);
-    }, 300);
-  }
-
-  /* ---------- データ送信 (iPad対応版) ---------- */
-async function submitData(operation) {
-  // 処理中ならボタン操作を無視
-  if (isProcessing) return;
-  isProcessing = true;
-  
-  // 入力値の取得と検証
-  const staff = document.getElementById("staffSelect").value;
-  const qtyInput = document.getElementById('quantityInput');
-
-  function getQuantity() {
-    const val = qtyInput.value.trim();       // 文字列
-    const quantity = Number(val);            // 数値に変換
-  
-    // バリデーション: 整数 & 1以上
-    if (!Number.isInteger(quantity) || quantity <= 0) {
-      alert('数量は 1 以上の整数で入力してください');
-      qtyInput.focus();
+        try {
+          // codeReaderを再初期化
+          initCodeReader();
+          
+          // さらに遅延させてカメラを再起動
+          setTimeout(() => {
+            console.log('カメラを再起動します');
+            isProcessing = false;
+            startScanner();
+          }, 200);
+        } catch(e) {
+          console.error('カメラ再起動エラー:', e);
+          isProcessing = false;
+          hideLoading();
+          document.getElementById('startCameraBtn').classList.remove('hidden');
+        }
+      }, 200);
+    } catch(e) {
+      console.error('returnToScannerエラー:', e);
       isProcessing = false;
-      return null;
+      hideLoading();
+      document.getElementById('startCameraBtn').classList.remove('hidden');
     }
-    return quantity;
   }
-  
-  // 数量を取得・バリデーション
-  const quantity = getQuantity();
-  if (quantity === null) return;  // バリデーション NG
 
-  // 入力チェック
-  if (!staff || !quantity || !selectedMode) {
-    alert("スタッフ名・数量・用途（外来/訪問）を選択してください！");
-    isProcessing = false;
+  /* ---------- データ送信 (完全改良版) ---------- */
+async function submitData(operation) {
+  console.log('submitData呼び出し:', operation);
+  
+  // 処理中ならスキップ
+  if (isProcessing) {
+    console.log('処理中のため無視します:', operation);
     return;
   }
-
-  // 確認ダイアログを表示
-  const confirmMsg = `${currentItemName} を ${quantity}個、${operation} しますか？`;
   
   try {
-    // iPad向けの対応: 少し遅延させてポップアップを表示
-    setTimeout(() => {
-      showPopup("確認", confirmMsg, async () => {
-        // 確認ダイアログ表示中はフラグを立てたまま
-        try {
-          // APIデータ準備
-          const data = {
-            code: CURRENT_TEXT,
-            operation,
-            staff,
-            quantity,
-            mode: selectedMode
-          };
-          
-          // API呼び出し
-          console.log('API呼び出し開始:', data);
-          let response = await callApi('GET', 'appendLog', data);
-          console.log('API応答:', response);
+    isProcessing = true;
+    
+    // 入力値の取得と検証
+    const staff = document.getElementById("staffSelect").value;
+    const qtyInput = document.getElementById('quantityInput');
+    let quantity;
+    
+    try {
+      const val = qtyInput.value.trim();
+      quantity = Number(val);
+      
+      // バリデーション: 整数 & 1以上
+      if (!Number.isInteger(quantity) || quantity <= 0) {
+        alert('数量は 1 以上の整数で入力してください');
+        qtyInput.focus();
+        isProcessing = false;
+        return;
+      }
+    } catch (e) {
+      alert('有効な数値を入力してください');
+      qtyInput.focus();
+      isProcessing = false;
+      return;
+    }
 
-          // 確認が必要な場合（在庫数チェックなど）
-          if (response.result === 'confirm') {
-            // 確認ダイアログを表示（2段階目）
-            setTimeout(() => {
-              showConfirmPopup(
-                "確認",
-                response.message,
-                async () => {             // YES
-                  try {
-                    // 確認フラグを付けて再送信
-                    const confirmedData = {
-                      code: CURRENT_TEXT,
-                      operation,
-                      staff,
-                      quantity,
-                      mode: selectedMode,
-                      confirmed: 'true'  // 確認フラグを追加
-                    };
-                    console.log('確認付きでAPI再呼び出し:', confirmedData);
-                    const confirmedResponse = await callApi('GET', 'appendLog', confirmedData);
-                    handleFinalResponse(confirmedResponse);
-                  } catch (error) {
-                    console.error('確認後のAPI呼び出しエラー:', error);
-                    showErrorPopup("エラー", "サーバーとの通信に失敗しました", () => {
-                      isProcessing = false;
-                      returnToScanner();
-                    });
-                  }
-                },
-                () => {           // NO
+    // 入力チェック
+    if (!staff || !selectedMode) {
+      alert("スタッフ名・用途（外来/訪問）を選択してください！");
+      isProcessing = false;
+      return;
+    }
+
+    // 確認メッセージ
+    const confirmMsg = `${currentItemName} を ${quantity}個、${operation} しますか？`;
+    
+    // 確認ダイアログ表示
+    showPopup("確認", confirmMsg, async function() {
+      try {
+        showLoading();
+        
+        const data = {
+          code: CURRENT_TEXT,
+          operation,
+          staff,
+          quantity,
+          mode: selectedMode
+        };
+        
+        console.log('API呼び出し:', data);
+        const response = await callApi('GET', 'appendLog', data);
+        console.log('API応答:', response);
+        
+        // 確認が必要な場合
+        if (response.result === 'confirm') {
+          hideLoading();
+          
+          showConfirmPopup(
+            "確認",
+            response.message,
+            async function() { // はい
+              try {
+                showLoading();
+                const confirmedData = {
+                  ...data,
+                  confirmed: 'true'
+                };
+                
+                const confirmedResponse = await callApi('GET', 'appendLog', confirmedData);
+                processActionResponse(confirmedResponse);
+              } catch (error) {
+                console.error('確認後のAPI呼び出しエラー:', error);
+                hideLoading();
+                showErrorPopup("エラー", "サーバーとの通信に失敗しました", function() {
                   isProcessing = false;
                   returnToScanner();
-                }
-              );
-            }, 50);
-            return;                     // いったん抜ける
-          }
-          
-          // 成功時の処理
-          if (response.result === 'success') {
-            setTimeout(() => {
-              showPopup("更新完了", response.message, () => {
-                // フォームをリセット
-                document.getElementById("staffSelect").value = "";
-                document.getElementById("quantityInput").value = "";
-                document.getElementById("result").textContent = "";
-                document.getElementById("formArea").classList.add("hidden");
-                document.getElementById("itemNameDisplay").textContent = "";
-                CURRENT_TEXT = "";
-                resetModeUI();
-                
-                // 処理完了後にカメラ画面へ戻る
-                isProcessing = false;
-                returnToScanner();
-              });
-            }, 50);
-          } else {
-            // エラー時の処理
-            setTimeout(() => {
-              showErrorPopup("エラー", response.message || "更新に失敗しました", () => {
-                isProcessing = false;
-                returnToScanner();
-              });
-            }, 50);
-          }
-        } catch (error) {
-          console.error('初回API呼び出しエラー:', error);
-          setTimeout(() => {
-            showErrorPopup("エラー", "サーバーとの通信に失敗しました", () => {
+                });
+              }
+            },
+            function() { // いいえ
               isProcessing = false;
               returnToScanner();
-            });
-          }, 50);
+            }
+          );
+        } else {
+          // 成功または失敗
+          processActionResponse(response);
         }
-      });
-    }, 50);  // iPad向けに確認ダイアログ表示前に少し遅延
+      } catch (error) {
+        console.error('API呼び出しエラー:', error);
+        hideLoading();
+        showErrorPopup("エラー", "サーバーとの通信に失敗しました", function() {
+          isProcessing = false;
+          returnToScanner();
+        });
+      }
+    });
   } catch (e) {
-    console.error('submitData処理中のエラー:', e);
+    console.error('submitData処理エラー:', e);
+    hideLoading();
     isProcessing = false;
   }
 }
+
+// API応答の処理
+function processActionResponse(response) {
+  hideLoading();
   
-  function handleFinalResponse(response){
-    if (response.result === 'success'){
-      setTimeout(() => {
-        showPopup("更新完了", response.message, () => {
-          /* 入力フォーム初期化など */
-          document.getElementById("staffSelect").value = "";
-          document.getElementById("quantityInput").value = "";
-          document.getElementById("result").textContent = "";
-          document.getElementById("formArea").classList.add("hidden");
-          document.getElementById("itemNameDisplay").textContent = "";
-          CURRENT_TEXT = "";
-          resetModeUI();
-          
-          // 処理完了後にカメラ画面へ戻る
-          isProcessing = false;
-          returnToScanner();
-        });
-      }, 50);
-    } else {
-      setTimeout(() => {
-        showErrorPopup("エラー", response.message || "更新に失敗しました", () => {
-          isProcessing = false;
-          returnToScanner();
-        });
-      }, 50);
-    }
+  if (response.result === 'success') {
+    showPopup("更新完了", response.message, function() {
+      // フォームリセット
+      document.getElementById("staffSelect").value = "";
+      document.getElementById("quantityInput").value = "";
+      document.getElementById("result").textContent = "";
+      document.getElementById("formArea").classList.add("hidden");
+      document.getElementById("itemNameDisplay").textContent = "";
+      CURRENT_TEXT = "";
+      resetModeUI();
+      
+      // カメラ画面に戻る
+      isProcessing = false;
+      returnToScanner();
+    });
+  } else {
+    showErrorPopup("エラー", response.message || "更新に失敗しました", function() {
+      isProcessing = false;
+      returnToScanner();
+    });
   }
+}
   
   /* ---------- 確認ダイアログ (iPad対応版) ---------- */
-  function showConfirmPopup(title, msg, yesCb, noCb){
+  function showConfirmPopup(title, msg, yesCb, noCb) {
     document.getElementById('popupHeader').textContent = title;
     document.getElementById('popupContent').textContent = msg;
     
     // ボタン設定
     const okBtn = document.getElementById('popupOkButton');
+    const noBtn = document.getElementById('restartButton');
+    
+    // ボタン表示
     okBtn.style.display = 'inline-block';
     okBtn.textContent = 'はい';
     
-    const noBtn = document.getElementById('restartButton');
     noBtn.style.display = 'inline-block';
     noBtn.textContent = 'いいえ';
     
@@ -1106,33 +1139,26 @@ async function submitData(operation) {
       noBtn.style.padding = '20px 40px';
     }
     
-    // イベントリスナー設定（複数付かないように一度削除）
-    okBtn.onclick = null;
-    okBtn.addEventListener('click', function(event) {
-      event.preventDefault();
-      event.stopPropagation();
-      closePopup();
-      if (yesCb) setTimeout(yesCb, 50);
-    }, { once: true });
+    // イベントリスナーをクリア
+    const newOkBtn = okBtn.cloneNode(true);
+    okBtn.parentNode.replaceChild(newOkBtn, okBtn);
     
-    noBtn.onclick = null;
-    noBtn.addEventListener('click', function(event) {
-      event.preventDefault();
-      event.stopPropagation();
+    const newNoBtn = noBtn.cloneNode(true);
+    noBtn.parentNode.replaceChild(newNoBtn, noBtn);
+    
+    // 新しいイベントリスナーを設定
+    newOkBtn.addEventListener('click', function() {
       closePopup();
-      if (noCb) setTimeout(noCb, 50);
-    }, { once: true });
+      if (yesCb) setTimeout(yesCb, 30);
+    });
+    
+    newNoBtn.addEventListener('click', function() {
+      closePopup();
+      if (noCb) setTimeout(noCb, 30);
+    });
     
     // ポップアップ表示
     document.getElementById('popupOverlay').style.display = 'flex';
-    
-    // 少しズレてUIを更新（レンダリングを強制）
-    setTimeout(() => {
-      document.getElementById('popupOverlay').style.opacity = '0.99';
-      setTimeout(() => {
-        document.getElementById('popupOverlay').style.opacity = '1';
-      }, 10);
-    }, 10);
   }
   
   /* ---------- 接続成功通知 ---------- */
