@@ -329,7 +329,7 @@ async function runSafariDiagnostics() {
   let selectedMode      = null;
   let currentStockOut   = 0;
   let currentStockVis   = 0;
-  let preferredDeviceId = null; 
+  let backCameraDeviceId = null; // 背面カメラのデバイスIDを保存
 
 /* ---------- ページロード後（デバッグ版） ---------- */
 document.addEventListener('DOMContentLoaded', () => {
@@ -402,30 +402,88 @@ async function testSafariConnection() {
     return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
   }
 
-  /* ---------- スキャナー起動 ---------- */
+  /* ---------- 背面カメラを見つける関数 ---------- */
+  async function findBackCamera() {
+    try {
+      const devices = await codeReader.listVideoInputDevices();
+      console.log('利用可能なカメラデバイス:', devices);
+      
+      // 背面カメラを探す（より厳密な条件）
+      const backCamera = devices.find(device => {
+        const label = device.label.toLowerCase();
+        return (
+          label.includes('back') || 
+          label.includes('rear') || 
+          label.includes('environment') ||
+          label.includes('facing back') ||
+          label.includes('camera 0') ||  // 多くの場合、背面カメラがカメラ0
+          (label.includes('camera') && label.includes('0'))
+        );
+      });
+      
+      if (backCamera) {
+        console.log('背面カメラが見つかりました:', backCamera);
+        return backCamera.deviceId;
+      }
+      
+      // 背面カメラが見つからない場合、デバイスが1つしかない場合はそれを使用
+      if (devices.length === 1) {
+        console.log('カメラが1つのみ。それを背面カメラとして使用:', devices[0]);
+        return devices[0].deviceId;
+      }
+      
+      // それでも見つからない場合はエラー
+      console.warn('背面カメラが見つかりませんでした');
+      return null;
+    } catch (error) {
+      console.error('カメラデバイス取得エラー:', error);
+      return null;
+    }
+  }
+
+  /* ---------- スキャナー起動（背面カメラ限定） ---------- */
   async function startScanner () {
-    if (!hasCamera()) return document.getElementById('fileInput').click();
-
-    const cams = await codeReader.listVideoInputDevices();
-
-    // ❶ 背面カメラを優先。ただし記憶しているものがあればそれを使う
-    let deviceId = preferredDeviceId;
-    if (!deviceId) {
-      deviceId = (cams.find(c => /back|rear|environment/i.test(c.label)) || cams[0] || {}).deviceId;
-      preferredDeviceId = deviceId;    // 覚える
+    if (!hasCamera()) {
+      console.log('カメラAPIが利用できません。ファイル入力を使用します。');
+      return document.getElementById('fileInput').click();
     }
 
-    codeReader.decodeFromVideoDevice(deviceId, 'reader', (res, err) => {
-      if (res) {
-        onScanSuccess(res.getText());
-        codeReader.reset();
-      } else if (err && !(err instanceof NotFoundException)) {
-        // ❷ err が undefined なら何もしない
-        if (err && err.message) {
-          alert('カメラエラー: ' + err.message);
-        }
+    try {
+      // 背面カメラのデバイスIDを取得（初回のみ）
+      if (!backCameraDeviceId) {
+        backCameraDeviceId = await findBackCamera();
       }
-    });
+      
+      if (!backCameraDeviceId) {
+        alert('背面カメラが見つかりません。ファイルからの読み取りをお試しください。');
+        return document.getElementById('fileInput').click();
+      }
+
+      console.log('背面カメラでスキャン開始:', backCameraDeviceId);
+      
+      // 背面カメラでのみスキャンを開始
+      codeReader.decodeFromVideoDevice(backCameraDeviceId, 'reader', (res, err) => {
+        if (res) {
+          onScanSuccess(res.getText());
+          codeReader.reset();
+        } else if (err && !(err instanceof NotFoundException)) {
+          // エラーハンドリング
+          if (err && err.message) {
+            console.error('カメラエラー:', err.message);
+            // 背面カメラで問題が発生した場合の処理
+            if (err.message.includes('NotReadableError') || err.message.includes('NotAllowedError')) {
+              alert('背面カメラにアクセスできません。カメラの権限を確認してください。');
+            } else {
+              alert('背面カメラエラー: ' + err.message);
+            }
+          }
+        }
+      });
+    } catch (error) {
+      console.error('スキャナー起動エラー:', error);
+      alert('背面カメラの起動に失敗しました。ファイルからの読み取りをお試しください。');
+      document.getElementById('fileInput').click();
+    }
   }
 
   /* ---------- 画像ファイル読み取り ---------- */
