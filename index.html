@@ -330,8 +330,8 @@ async function runSafariDiagnostics() {
   let currentStockOut   = 0;
   let currentStockVis   = 0;
   let preferredDeviceId = null; 
-  let backCameraAttempted = false; // 背面カメラを強制的に使用するためのフラグ
   let scannerActive = false; // スキャナーが現在アクティブかどうかのフラグ
+  let cameraStream = null;  // カメラのストリームを保持する変数
 
 /* ---------- ページロード後（デバッグ版） ---------- */
 document.addEventListener('DOMContentLoaded', () => {
@@ -345,13 +345,8 @@ document.addEventListener('DOMContentLoaded', () => {
   console.log('Chrome含む?:', userAgent.toLowerCase().includes('chrome'));
   console.log('Safari含む?:', userAgent.toLowerCase().includes('safari'));
   
-  // codeReaderの初期化（改良：遅いデバイス用に少し時間を空ける）
-  setTimeout(() => {
-    codeReader = new BrowserQRCodeReader(undefined, { 
-      delayBetweenScanAttempts: 300,  // スキャン間の遅延を少し増やす
-      maxScansPerSecond: 2            // 1秒あたりの最大スキャン数を制限
-    });
-  }, 500);
+  // codeReaderの初期化
+  initCodeReader();
   
   // 強制的にテスト実行（全ブラウザで）
   console.log('接続テスト開始（全ブラウザ対象）');
@@ -393,6 +388,24 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 });
 
+// codeReaderの初期化関数
+function initCodeReader() {
+  if (codeReader) {
+    try {
+      codeReader.reset();
+    } catch (e) {
+      console.warn('既存のcodeReaderをリセット中にエラー:', e);
+    }
+  }
+  
+  codeReader = new BrowserQRCodeReader(undefined, { 
+    delayBetweenScanAttempts: 300,  // スキャン間の遅延を少し増やす
+    maxScansPerSecond: 2            // 1秒あたりの最大スキャン数を制限
+  });
+  
+  console.log('codeReaderを初期化しました');
+}
+
 /* ---------- Safari接続テスト ---------- */
 async function testSafariConnection() {
   try {
@@ -411,41 +424,74 @@ async function testSafariConnection() {
     return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
   }
 
-  /* ---------- スキャナー起動 (シンプル優先で安定化) ---------- */
+// カメラストリームの完全停止
+function stopCameraStream() {
+  if (cameraStream) {
+    try {
+      const tracks = cameraStream.getTracks();
+      tracks.forEach(track => {
+        track.stop();
+        console.log('カメラトラックを停止:', track.label);
+      });
+      cameraStream = null;
+      console.log('カメラストリームを完全に解放しました');
+    } catch (e) {
+      console.warn('カメラストリーム停止中にエラー:', e);
+    }
+  }
+  
+  if (codeReader) {
+    try {
+      codeReader.reset();
+      console.log('codeReaderをリセットしました');
+    } catch (e) {
+      console.warn('codeReaderリセット中にエラー:', e);
+    }
+  }
+  
+  scannerActive = false;
+}
+
+/* ---------- スキャナー起動 (改良版) ---------- */
 async function startScanner() {
-  // すでにアクティブなら何もしない
+  console.log('startScanner()が呼び出されました');
+  
+  // スキャナーが既にアクティブなら何もしない
   if (scannerActive) {
-    console.log('スキャナーはすでにアクティブです');
+    console.log('スキャナーは既にアクティブです');
     return;
   }
 
+  // カメラAPIがなければファイル選択に切り替え
   if (!hasCamera()) {
     alert('お使いのブラウザはカメラに対応していません。ファイルから画像を選択してください。');
     return document.getElementById('fileInput').click();
   }
-
-  // codeReaderの初期化チェック
+  
+  // 古いカメラストリームを完全に停止
+  stopCameraStream();
+  
+  // codeReaderが壊れていたら再初期化
   if (!codeReader) {
-    codeReader = new BrowserQRCodeReader(undefined, { 
-      delayBetweenScanAttempts: 300,
-      maxScansPerSecond: 2
-    });
+    initCodeReader();
   }
 
   try {
+    // UI更新
     document.getElementById('result').textContent = "カメラ接続中...";
     document.getElementById('startCameraBtn').classList.add('hidden');
     document.getElementById('reader').classList.remove('hidden');
 
+    console.log('カメラデバイスのリストを取得中...');
     // カメラのリストを取得
     const cams = await codeReader.listVideoInputDevices();
-    console.log('利用可能なカメラ:', cams);
+    console.log('利用可能なカメラ:', cams.map(c => ({ id: c.deviceId, label: c.label })));
     
     if (!cams || cams.length === 0) {
       throw new Error('利用可能なカメラが見つかりません');
     }
     
-    // カメラ選択（シンプルに戻す - より安定性を優先）
+    // カメラ選択
     let deviceId;
     
     // 優先順位: 1.背面カメラ 2.2台目のカメラ 3.最初のカメラ
@@ -472,15 +518,41 @@ async function startScanner() {
     // 記憶しておく
     preferredDeviceId = deviceId;
 
-    // キャンバスをクリア
-    const video = document.getElementById('reader');
-    if (video) {
-      const ctx = document.createElement('canvas').getContext('2d');
-      ctx.drawImage(video, 0, 0, 1, 1); // ビデオをクリア
+    // ビデオ要素を取得
+    const videoElem = document.getElementById('reader');
+    
+    // カメラのストリームを取得 (直接MediaStreamを取得)
+    console.log(`カメラID "${deviceId}" のストリームを取得...`);
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: { 
+          deviceId: { exact: deviceId },
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        }
+      });
+      
+      console.log('カメラストリーム取得成功:', cameraStream);
+      
+      // ビデオ要素に直接ストリームを設定
+      videoElem.srcObject = cameraStream;
+      await videoElem.play();
+      console.log('ビデオプレビュー開始');
+    } catch (streamError) {
+      console.error('カメラストリーム取得エラー:', streamError);
+      // フォールバック: どのカメラでも良いから取得を試みる
+      try {
+        cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        videoElem.srcObject = cameraStream;
+        await videoElem.play();
+        console.log('フォールバックカメラを使用');
+      } catch (fallbackError) {
+        console.error('フォールバックカメラも失敗:', fallbackError);
+        throw fallbackError; // 再スロー
+      }
     }
 
-    // スキャナーを起動
-    console.log('カメラ起動:', deviceId);
+    // UI更新
     document.getElementById('result').textContent = "QRコードを読み取り中...";
     
     // スキャナーをアクティブに設定
@@ -490,6 +562,7 @@ async function startScanner() {
     let errorDisplayed = false;
 
     // デコード開始
+    console.log('QRコードのデコードを開始します');
     codeReader.decodeFromVideoDevice(
       deviceId,
       'reader',
@@ -498,8 +571,6 @@ async function startScanner() {
         if (result) {
           try {
             console.log('QRコード検出:', result.getText());
-            scannerActive = false;
-            codeReader.reset(); // スキャナーを停止
             onScanSuccess(result.getText());
           } catch (processError) {
             console.error('QRコード処理中のエラー:', processError);
@@ -514,7 +585,6 @@ async function startScanner() {
           console.warn('カメラエラー:', err);
           
           // 重大なエラーのみポップアップ表示
-          // 多くのエラーは一時的なもので、自動的に回復する可能性があるため
           if ((err.name === 'NotAllowedError' || 
                err.name === 'NotFoundError' || 
                err.name === 'NotReadableError') && 
@@ -563,14 +633,12 @@ async function startScanner() {
 
 // スキャナー状態のリセット
 function resetScannerState() {
-  scannerActive = false;
-  if (codeReader) {
-    try {
-      codeReader.reset();
-    } catch (e) {
-      console.warn('codeReader リセットエラー:', e);
-    }
-  }
+  console.log('resetScannerStateが呼び出されました');
+  
+  // カメラストリームを停止
+  stopCameraStream();
+  
+  // UI状態をリセット
   document.getElementById('startCameraBtn').classList.remove('hidden');
   document.getElementById('result').textContent = "読み取り待機中...";
 }
@@ -585,20 +653,15 @@ function resetScannerState() {
     }
   }
 
-/* ========== QRコード読み取り成功時の処理（安定版） ========== */
+/* ========== QRコード読み取り成功時の処理 ========== */
 async function onScanSuccess(decodedText) {
+  console.log('onScanSuccess:', decodedText);
+  
   // 重複処理防止（同じQRを連続で読み取った場合）
   if (CURRENT_TEXT === decodedText) return;
   
   // スキャナーのリセット・停止
-  if (codeReader) {
-    try {
-      codeReader.reset();
-      scannerActive = false;
-    } catch (e) {
-      console.warn('スキャナーリセットエラー:', e);
-    }
-  }
+  stopCameraStream();
   
   // 結果表示
   CURRENT_TEXT = decodedText;
@@ -694,31 +757,32 @@ async function onScanSuccess(decodedText) {
     document.getElementById('popupOverlay').style.display='none';
   }
 
-  /* ---------- カメラ画面へ戻る (シンプル版) ---------- */
+  /* ---------- カメラ画面へ戻る (完全改良版) ---------- */
   function returnToScanner(){
-    // リセット
+    console.log('returnToScannerが呼び出されました');
+    
+    // UI状態をリセット
     document.getElementById("formArea").classList.add("hidden");
     document.getElementById("reader").classList.remove("hidden");
-    document.getElementById("startCameraBtn").classList.remove("hidden");
-    document.getElementById("result").textContent = "読み取り待機中…";
+    document.getElementById("result").textContent = "カメラ接続中...";
     document.getElementById("itemNameDisplay").textContent = "";
     CURRENT_TEXT = "";
     resetModeUI();
     
-    // カメラをリセット
-    if (codeReader) {
-      try {
-        codeReader.reset();
-        scannerActive = false;
-      } catch (e) {
-        console.warn('スキャナーリセットエラー:', e);
-      }
-    }
+    // 古いカメラストリームを完全に停止してから再度初期化
+    stopCameraStream();
     
-    // 遅延させてカメラを再起動
+    // カメラの動作環境が完全にクリーンアップされるのを待ってから再起動
     setTimeout(() => {
-      startScanner();
-    }, 500);
+      // codeReaderを再初期化
+      initCodeReader();
+      
+      // 遅延をさらに入れてカメラを再起動
+      setTimeout(() => {
+        console.log('カメラを再起動します');
+        startScanner();
+      }, 300);
+    }, 300);
   }
 
   /* ---------- データ送信 ---------- */
@@ -797,6 +861,9 @@ async function submitData(operation) {
           document.getElementById("itemNameDisplay").textContent = "";
           CURRENT_TEXT = "";
           resetModeUI();
+          
+          // 処理完了後にカメラ画面へ戻る
+          returnToScanner();
         });
       } else {
         showErrorPopup("エラー", response.message || "更新に失敗しました", returnToScanner);
@@ -819,6 +886,9 @@ async function submitData(operation) {
         document.getElementById("itemNameDisplay").textContent = "";
         CURRENT_TEXT = "";
         resetModeUI();
+        
+        // 処理完了後にカメラ画面へ戻る
+        returnToScanner();
       });
     } else {
       showErrorPopup("エラー", response.message || "更新に失敗しました", returnToScanner);
