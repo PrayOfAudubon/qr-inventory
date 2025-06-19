@@ -2,7 +2,7 @@
 <html>
 <head>
   <base target="_top">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>在庫管理アプリ</title>
 
   <style>
@@ -10,6 +10,13 @@
 body{
   font-family:'Segoe UI','Helvetica Neue',sans-serif;
   background:#f4f6fa;margin:0;padding:0;font-size:22px;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  -khtml-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
 }
 header{
   background:linear-gradient(90deg,#42a5f5,#1e88e5);
@@ -57,8 +64,12 @@ select, input[type="number"]{
   color:#fff;border:none;border-radius:32px;cursor:pointer;
   background:linear-gradient(90deg,#42a5f5,#1e88e5);
   box-shadow:0 4px 6px rgba(0,0,0,.1);transition:transform .1s ease;
+  touch-action: manipulation;
+  -webkit-appearance: none;
+  -webkit-tap-highlight-color: transparent;
 }
 .btn:hover{transform:translateY(-2px);background:linear-gradient(90deg,#1e88e5,#1565c0);}
+.btn:active{transform:translateY(1px);}
 
 /* 用途ボタン強調 */
 .mode-btn      {background:#1e88e5;}
@@ -71,24 +82,41 @@ select, input[type="number"]{
 
 /* ========== ポップアップ ========== */
 .popup-overlay{
-  position:fixed;inset:0;background:rgba(0,0,0,.4);
+  position:fixed;inset:0;background:rgba(0,0,0,.6);
   display:none;justify-content:center;align-items:center;z-index:1000;
+  touch-action: none;
 }
 .popup{
   background:#fff;border-radius:20px;padding:28px;width:90%;max-width:420px;
-  box-shadow:0 4px 16px rgba(0,0,0,.2);text-align:center;
+  box-shadow:0 4px 16px rgba(0,0,0,.3);text-align:center;
+  position: relative;
 }
 .popup-header{font-size:26px;font-weight:bold;margin-bottom:14px;}
 .popup-content{font-size:22px;margin-bottom:24px;}
 .popup-button,.popup-close{
   background:#42a5f5;border:none;color:#fff;padding:16px 28px;font-size:22px;
   border-radius:32px;cursor:pointer;margin:8px 0;
+  touch-action: manipulation;
+  -webkit-appearance: none;
+  -webkit-tap-highlight-color: transparent;
 }
-.popup-button:hover{background:#1e88e5;}
+.popup-button:hover, .popup-button:active{background:#1e88e5;}
 .popup-close{
   position:absolute;top:10px;right:14px;background:none;color:#999;font-size:26px;
+  padding: 0px 12px;
 }
 .popup-close:hover{color:#666;}
+
+/* iPad調整 */
+@media (pointer: coarse) {
+  .popup {
+    transform: translateZ(0);
+    padding-top: 40px;
+  }
+  .popup-button {
+    padding: 20px 30px;
+  }
+}
 
 .hidden{display:none!important;}
 
@@ -332,18 +360,29 @@ async function runSafariDiagnostics() {
   let preferredDeviceId = null; 
   let scannerActive = false; // スキャナーが現在アクティブかどうかのフラグ
   let cameraStream = null;  // カメラのストリームを保持する変数
+  let isProcessing = false; // 処理中フラグ（重複処理防止用）
+  let isIPad = false;       // iPadフラグ
 
 /* ---------- ページロード後（デバッグ版） ---------- */
 document.addEventListener('DOMContentLoaded', () => {
   // ブラウザ判定のデバッグ
   const userAgent = navigator.userAgent;
   const isSafari = /^((?!chrome|android).)*safari/i.test(userAgent);
+  isIPad = /iPad|Macintosh/.test(userAgent) && 'ontouchend' in document;
   
   console.log('=== ブラウザ判定デバッグ ===');
   console.log('User Agent:', userAgent);
   console.log('Safari判定結果:', isSafari);
+  console.log('iPad判定結果:', isIPad);
   console.log('Chrome含む?:', userAgent.toLowerCase().includes('chrome'));
   console.log('Safari含む?:', userAgent.toLowerCase().includes('safari'));
+  
+  // touchmove イベントのデフォルト動作を防ぐ（iPadでのスクロールを抑制）
+  document.addEventListener('touchmove', function(e) {
+    if (document.getElementById('popupOverlay').style.display === 'flex') {
+      e.preventDefault();
+    }
+  }, { passive: false });
   
   // codeReaderの初期化
   initCodeReader();
@@ -456,6 +495,12 @@ function stopCameraStream() {
 async function startScanner() {
   console.log('startScanner()が呼び出されました');
   
+  // 処理中なら無視
+  if (isProcessing) {
+    console.log('処理中のため無視します');
+    return;
+  }
+  
   // スキャナーが既にアクティブなら何もしない
   if (scannerActive) {
     console.log('スキャナーは既にアクティブです');
@@ -468,15 +513,17 @@ async function startScanner() {
     return document.getElementById('fileInput').click();
   }
   
-  // 古いカメラストリームを完全に停止
-  stopCameraStream();
+  isProcessing = true;
   
-  // codeReaderが壊れていたら再初期化
-  if (!codeReader) {
-    initCodeReader();
-  }
-
   try {
+    // 古いカメラストリームを完全に停止
+    stopCameraStream();
+    
+    // codeReaderが壊れていたら再初期化
+    if (!codeReader) {
+      initCodeReader();
+    }
+
     // UI更新
     document.getElementById('result').textContent = "カメラ接続中...";
     document.getElementById('startCameraBtn').classList.add('hidden');
@@ -628,6 +675,8 @@ async function startScanner() {
     document.getElementById('startCameraBtn').classList.remove('hidden');
     document.getElementById('result').textContent = "カメラ接続エラー";
     showErrorPopup("エラー", "カメラの起動に失敗しました。ページを再読み込みしてお試しください。", resetScannerState);
+  } finally {
+    isProcessing = false;
   }
 }
 
@@ -641,6 +690,8 @@ function resetScannerState() {
   // UI状態をリセット
   document.getElementById('startCameraBtn').classList.remove('hidden');
   document.getElementById('result').textContent = "読み取り待機中...";
+  
+  isProcessing = false;
 }
 
   /* ---------- 画像ファイル読み取り ---------- */
@@ -657,8 +708,15 @@ function resetScannerState() {
 async function onScanSuccess(decodedText) {
   console.log('onScanSuccess:', decodedText);
   
+  // 処理中なら無視
+  if (isProcessing) return;
+  isProcessing = true;
+  
   // 重複処理防止（同じQRを連続で読み取った場合）
-  if (CURRENT_TEXT === decodedText) return;
+  if (CURRENT_TEXT === decodedText) {
+    isProcessing = false;
+    return;
+  }
   
   // スキャナーのリセット・停止
   stopCameraStream();
@@ -680,12 +738,14 @@ async function onScanSuccess(decodedText) {
     if (!info || (!info.name && !info.error)) {
       console.error('予期しない応答形式', info);
       showErrorPopup("エラー", "サーバーから予期しない応答がありました", returnToScanner);
+      isProcessing = false;
       return;
     }
     
     if (info.error || !info.name) {
       console.log('アイテムが見つかりません', info);
       showErrorPopup("エラー", "コードがデータベースに存在しません", returnToScanner);
+      isProcessing = false;
       return;
     }
     
@@ -708,6 +768,8 @@ async function onScanSuccess(decodedText) {
       ? "Safari通信エラー：設定を確認してください" 
       : "データの取得に失敗しました";
     showErrorPopup("エラー", errorMsg, returnToScanner);
+  } finally {
+    isProcessing = false;
   }
 }
 
@@ -736,30 +798,98 @@ async function onScanSuccess(decodedText) {
     if (sd) sd.textContent = '';
   }
 
-  /* ---------- ポップアップ ---------- */
+  /* ---------- ポップアップ (改良版) ---------- */
   function showPopup(title,msg,okCb){
     document.getElementById('popupHeader').textContent = title;
     document.getElementById('popupContent').textContent = msg;
-    document.getElementById('popupOverlay').style.display='flex';
-    document.getElementById('popupOkButton').style.display='inline-block';
-    document.getElementById('restartButton').style.display='none';
-    document.getElementById('popupOkButton').onclick=()=>{closePopup();okCb&&okCb();};
+    
+    // ボタン設定
+    const okBtn = document.getElementById('popupOkButton');
+    okBtn.style.display = 'inline-block';
+    document.getElementById('restartButton').style.display = 'none';
+    
+    // iPadで大きなボタンに
+    if (isIPad) {
+      okBtn.style.fontSize = '26px';
+      okBtn.style.padding = '20px 40px';
+    }
+    
+    // イベントリスナー設定（複数付かないように一度削除）
+    okBtn.onclick = null;
+    okBtn.addEventListener('click', function(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      closePopup();
+      if (okCb) setTimeout(okCb, 50);
+    }, { once: true });
+    
+    // ポップアップ表示
+    document.getElementById('popupOverlay').style.display = 'flex';
+    
+    // 少しズレてUIを更新（レンダリングを強制）
+    setTimeout(() => {
+      document.getElementById('popupOverlay').style.opacity = '0.99';
+      setTimeout(() => {
+        document.getElementById('popupOverlay').style.opacity = '1';
+      }, 10);
+    }, 10);
   }
+  
   function showErrorPopup(title,msg,okCb){
     document.getElementById('popupHeader').textContent = title;
     document.getElementById('popupContent').textContent = msg;
-    document.getElementById('popupOverlay').style.display='flex';
-    document.getElementById('popupOkButton').style.display='none';
-    document.getElementById('restartButton').style.display='inline-block';
-    document.getElementById('restartButton').onclick=()=>{closePopup();okCb&&okCb();};
+    
+    // ボタン設定
+    const okBtn = document.getElementById('popupOkButton');
+    okBtn.style.display = 'none';
+    const restartBtn = document.getElementById('restartButton');
+    restartBtn.style.display = 'inline-block';
+    restartBtn.textContent = 'QR読み取り画面に戻る';
+    
+    // iPadで大きなボタンに
+    if (isIPad) {
+      restartBtn.style.fontSize = '26px';
+      restartBtn.style.padding = '20px 40px';
+    }
+    
+    // イベントリスナー設定（複数付かないように一度削除）
+    restartBtn.onclick = null;
+    restartBtn.addEventListener('click', function(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      closePopup();
+      if (okCb) setTimeout(okCb, 50);
+    }, { once: true });
+    
+    // ポップアップ表示
+    document.getElementById('popupOverlay').style.display = 'flex';
+    
+    // 少しズレてUIを更新（レンダリングを強制）
+    setTimeout(() => {
+      document.getElementById('popupOverlay').style.opacity = '0.99';
+      setTimeout(() => {
+        document.getElementById('popupOverlay').style.opacity = '1';
+      }, 10);
+    }, 10);
   }
+  
   function closePopup(){
-    document.getElementById('popupOverlay').style.display='none';
+    const overlay = document.getElementById('popupOverlay');
+    overlay.style.opacity = '0.99';
+    
+    setTimeout(() => {
+      overlay.style.display = 'none';
+      overlay.style.opacity = '1';
+    }, 50);
   }
 
   /* ---------- カメラ画面へ戻る (完全改良版) ---------- */
   function returnToScanner(){
     console.log('returnToScannerが呼び出されました');
+    
+    // 処理中なら無視
+    if (isProcessing) return;
+    isProcessing = true;
     
     // UI状態をリセット
     document.getElementById("formArea").classList.add("hidden");
@@ -780,13 +910,19 @@ async function onScanSuccess(decodedText) {
       // 遅延をさらに入れてカメラを再起動
       setTimeout(() => {
         console.log('カメラを再起動します');
+        isProcessing = false;
         startScanner();
       }, 300);
     }, 300);
   }
 
-  /* ---------- データ送信 ---------- */
+  /* ---------- データ送信 (iPad対応版) ---------- */
 async function submitData(operation) {
+  // 処理中ならボタン操作を無視
+  if (isProcessing) return;
+  isProcessing = true;
+  
+  // 入力値の取得と検証
   const staff = document.getElementById("staffSelect").value;
   const qtyInput = document.getElementById('quantityInput');
 
@@ -798,6 +934,7 @@ async function submitData(operation) {
     if (!Number.isInteger(quantity) || quantity <= 0) {
       alert('数量は 1 以上の整数で入力してください');
       qtyInput.focus();
+      isProcessing = false;
       return null;
     }
     return quantity;
@@ -807,53 +944,123 @@ async function submitData(operation) {
   const quantity = getQuantity();
   if (quantity === null) return;  // バリデーション NG
 
+  // 入力チェック
   if (!staff || !quantity || !selectedMode) {
     alert("スタッフ名・数量・用途（外来/訪問）を選択してください！");
+    isProcessing = false;
     return;
   }
 
+  // 確認ダイアログを表示
   const confirmMsg = `${currentItemName} を ${quantity}個、${operation} しますか？`;
-  showPopup("確認", confirmMsg, async () => {
-    try {
-      const data = {
-        code: CURRENT_TEXT,
-        operation,
-        staff,
-        quantity,
-        mode: selectedMode
-      };
-      
-      let response = await callApi('GET', 'appendLog', data);
+  
+  try {
+    // iPad向けの対応: 少し遅延させてポップアップを表示
+    setTimeout(() => {
+      showPopup("確認", confirmMsg, async () => {
+        // 確認ダイアログ表示中はフラグを立てたまま
+        try {
+          // APIデータ準備
+          const data = {
+            code: CURRENT_TEXT,
+            operation,
+            staff,
+            quantity,
+            mode: selectedMode
+          };
+          
+          // API呼び出し
+          console.log('API呼び出し開始:', data);
+          let response = await callApi('GET', 'appendLog', data);
+          console.log('API応答:', response);
 
-      if (response.result === 'confirm') {
-        showConfirmPopup(
-          "確認",
-          response.message,
-          async () => {             // YES
-            try {
-              // 確認フラグを付けて再送信
-              const confirmedData = {
-                code: CURRENT_TEXT,
-                operation,
-                staff,
-                quantity,
-                mode: selectedMode,
-                confirmed: 'true'  // 確認フラグを追加
-              };
-              const confirmedResponse = await callApi('GET', 'appendLog', confirmedData);
-              handleFinalResponse(confirmedResponse);
-            } catch (error) {
-              console.error('確認後のAPI呼び出しエラー:', error);
-              showErrorPopup("エラー", "サーバーとの通信に失敗しました", returnToScanner);
-            }
-          },
-          returnToScanner           // NO
-        );
-        return;                     // いったん抜ける
-      }
-      
-      if (response.result === 'success') {
+          // 確認が必要な場合（在庫数チェックなど）
+          if (response.result === 'confirm') {
+            // 確認ダイアログを表示（2段階目）
+            setTimeout(() => {
+              showConfirmPopup(
+                "確認",
+                response.message,
+                async () => {             // YES
+                  try {
+                    // 確認フラグを付けて再送信
+                    const confirmedData = {
+                      code: CURRENT_TEXT,
+                      operation,
+                      staff,
+                      quantity,
+                      mode: selectedMode,
+                      confirmed: 'true'  // 確認フラグを追加
+                    };
+                    console.log('確認付きでAPI再呼び出し:', confirmedData);
+                    const confirmedResponse = await callApi('GET', 'appendLog', confirmedData);
+                    handleFinalResponse(confirmedResponse);
+                  } catch (error) {
+                    console.error('確認後のAPI呼び出しエラー:', error);
+                    showErrorPopup("エラー", "サーバーとの通信に失敗しました", () => {
+                      isProcessing = false;
+                      returnToScanner();
+                    });
+                  }
+                },
+                () => {           // NO
+                  isProcessing = false;
+                  returnToScanner();
+                }
+              );
+            }, 50);
+            return;                     // いったん抜ける
+          }
+          
+          // 成功時の処理
+          if (response.result === 'success') {
+            setTimeout(() => {
+              showPopup("更新完了", response.message, () => {
+                // フォームをリセット
+                document.getElementById("staffSelect").value = "";
+                document.getElementById("quantityInput").value = "";
+                document.getElementById("result").textContent = "";
+                document.getElementById("formArea").classList.add("hidden");
+                document.getElementById("itemNameDisplay").textContent = "";
+                CURRENT_TEXT = "";
+                resetModeUI();
+                
+                // 処理完了後にカメラ画面へ戻る
+                isProcessing = false;
+                returnToScanner();
+              });
+            }, 50);
+          } else {
+            // エラー時の処理
+            setTimeout(() => {
+              showErrorPopup("エラー", response.message || "更新に失敗しました", () => {
+                isProcessing = false;
+                returnToScanner();
+              });
+            }, 50);
+          }
+        } catch (error) {
+          console.error('初回API呼び出しエラー:', error);
+          setTimeout(() => {
+            showErrorPopup("エラー", "サーバーとの通信に失敗しました", () => {
+              isProcessing = false;
+              returnToScanner();
+            });
+          }, 50);
+        }
+      });
+    }, 50);  // iPad向けに確認ダイアログ表示前に少し遅延
+  } catch (e) {
+    console.error('submitData処理中のエラー:', e);
+    isProcessing = false;
+  }
+}
+  
+  function handleFinalResponse(response){
+    if (response.result === 'success'){
+      setTimeout(() => {
         showPopup("更新完了", response.message, () => {
+          /* 入力フォーム初期化など */
           document.getElementById("staffSelect").value = "";
           document.getElementById("quantityInput").value = "";
           document.getElementById("result").textContent = "";
@@ -863,55 +1070,71 @@ async function submitData(operation) {
           resetModeUI();
           
           // 処理完了後にカメラ画面へ戻る
+          isProcessing = false;
           returnToScanner();
         });
-      } else {
-        showErrorPopup("エラー", response.message || "更新に失敗しました", returnToScanner);
-      }
-    } catch (error) {
-      console.error('初回API呼び出しエラー:', error);
-      showErrorPopup("エラー", "サーバーとの通信に失敗しました", returnToScanner);
-    }
-  });
-}
-  
-  function handleFinalResponse(response){
-    if (response.result === 'success'){
-      showPopup("更新完了", response.message, () => {
-        /* 入力フォーム初期化など */
-        document.getElementById("staffSelect").value = "";
-        document.getElementById("quantityInput").value = "";
-        document.getElementById("result").textContent = "";
-        document.getElementById("formArea").classList.add("hidden");
-        document.getElementById("itemNameDisplay").textContent = "";
-        CURRENT_TEXT = "";
-        resetModeUI();
-        
-        // 処理完了後にカメラ画面へ戻る
-        returnToScanner();
-      });
+      }, 50);
     } else {
-      showErrorPopup("エラー", response.message || "更新に失敗しました", returnToScanner);
+      setTimeout(() => {
+        showErrorPopup("エラー", response.message || "更新に失敗しました", () => {
+          isProcessing = false;
+          returnToScanner();
+        });
+      }, 50);
     }
   }
   
+  /* ---------- 確認ダイアログ (iPad対応版) ---------- */
   function showConfirmPopup(title, msg, yesCb, noCb){
     document.getElementById('popupHeader').textContent = title;
     document.getElementById('popupContent').textContent = msg;
-    document.getElementById('popupOverlay').style.display = 'flex';
-
-    // 「はい」ボタン（OK）を表示
+    
+    // ボタン設定
     const okBtn = document.getElementById('popupOkButton');
     okBtn.style.display = 'inline-block';
     okBtn.textContent = 'はい';
-    okBtn.onclick = () => { closePopup(); yesCb && yesCb(); };
-
-    // 「いいえ」ボタン（restart）を表示
+    
     const noBtn = document.getElementById('restartButton');
     noBtn.style.display = 'inline-block';
     noBtn.textContent = 'いいえ';
-    noBtn.onclick = () => { closePopup(); noCb && noCb(); };
+    
+    // iPadで大きなボタンに
+    if (isIPad) {
+      okBtn.style.fontSize = '26px';
+      okBtn.style.padding = '20px 40px';
+      noBtn.style.fontSize = '26px';
+      noBtn.style.padding = '20px 40px';
+    }
+    
+    // イベントリスナー設定（複数付かないように一度削除）
+    okBtn.onclick = null;
+    okBtn.addEventListener('click', function(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      closePopup();
+      if (yesCb) setTimeout(yesCb, 50);
+    }, { once: true });
+    
+    noBtn.onclick = null;
+    noBtn.addEventListener('click', function(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      closePopup();
+      if (noCb) setTimeout(noCb, 50);
+    }, { once: true });
+    
+    // ポップアップ表示
+    document.getElementById('popupOverlay').style.display = 'flex';
+    
+    // 少しズレてUIを更新（レンダリングを強制）
+    setTimeout(() => {
+      document.getElementById('popupOverlay').style.opacity = '0.99';
+      setTimeout(() => {
+        document.getElementById('popupOverlay').style.opacity = '1';
+      }, 10);
+    }, 10);
   }
+  
   /* ---------- 接続成功通知 ---------- */
 function showConnectionSuccessNotification() {
   // 通知バナー作成
