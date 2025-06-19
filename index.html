@@ -331,6 +331,7 @@ async function runSafariDiagnostics() {
   let currentStockVis   = 0;
   let preferredDeviceId = null; 
   let backCameraAttempted = false; // 背面カメラを強制的に使用するためのフラグ
+  let scannerActive = false; // スキャナーが現在アクティブかどうかのフラグ
 
 /* ---------- ページロード後（デバッグ版） ---------- */
 document.addEventListener('DOMContentLoaded', () => {
@@ -343,6 +344,14 @@ document.addEventListener('DOMContentLoaded', () => {
   console.log('Safari判定結果:', isSafari);
   console.log('Chrome含む?:', userAgent.toLowerCase().includes('chrome'));
   console.log('Safari含む?:', userAgent.toLowerCase().includes('safari'));
+  
+  // codeReaderの初期化（改良：遅いデバイス用に少し時間を空ける）
+  setTimeout(() => {
+    codeReader = new BrowserQRCodeReader(undefined, { 
+      delayBetweenScanAttempts: 300,  // スキャン間の遅延を少し増やす
+      maxScansPerSecond: 2            // 1秒あたりの最大スキャン数を制限
+    });
+  }, 500);
   
   // 強制的にテスト実行（全ブラウザで）
   console.log('接続テスト開始（全ブラウザ対象）');
@@ -371,10 +380,9 @@ document.addEventListener('DOMContentLoaded', () => {
       // エラー時のみアラート（重要な情報なので）
       alert(`接続テストに失敗しました。\n\nエラー: ${error.message}\n\nコンソールログを確認してください。`);
     }
-   }, 2000); 
-  
-  codeReader = new BrowserQRCodeReader(undefined, { delayBetweenScanAttempts: 200 });
+   }, 2000);
 
+  // イベントリスナーの登録
   document.getElementById('startCameraBtn')
           .addEventListener('click', startScanner);
 
@@ -403,106 +411,168 @@ async function testSafariConnection() {
     return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
   }
 
-  /* ---------- スキャナー起動 (修正済み) ---------- */
+  /* ---------- スキャナー起動 (シンプル優先で安定化) ---------- */
 async function startScanner() {
+  // すでにアクティブなら何もしない
+  if (scannerActive) {
+    console.log('スキャナーはすでにアクティブです');
+    return;
+  }
+
   if (!hasCamera()) {
     alert('お使いのブラウザはカメラに対応していません。ファイルから画像を選択してください。');
     return document.getElementById('fileInput').click();
   }
 
+  // codeReaderの初期化チェック
+  if (!codeReader) {
+    codeReader = new BrowserQRCodeReader(undefined, { 
+      delayBetweenScanAttempts: 300,
+      maxScansPerSecond: 2
+    });
+  }
+
   try {
+    document.getElementById('result').textContent = "カメラ接続中...";
+    document.getElementById('startCameraBtn').classList.add('hidden');
+    document.getElementById('reader').classList.remove('hidden');
+
     // カメラのリストを取得
     const cams = await codeReader.listVideoInputDevices();
+    console.log('利用可能なカメラ:', cams);
     
-    // カメラが見つからない場合の処理
     if (!cams || cams.length === 0) {
-      alert('利用可能なカメラが見つかりませんでした。\n\n考えられる原因:\n・ブラウザにカメラの使用を許可していない\n・他のアプリがカメラを使用している\n・PCやスマートフォンにカメラが接続されていない');
-      return;
+      throw new Error('利用可能なカメラが見つかりません');
     }
-
-    console.log('利用可能なカメラ一覧:', cams.map(c => ({ id: c.deviceId, label: c.label })));
     
-    // 背面カメラを強制的に選択
-    let deviceId = null;
+    // カメラ選択（シンプルに戻す - より安定性を優先）
+    let deviceId;
     
-    // 背面カメラを探す (環境によって名前が異なる)
+    // 優先順位: 1.背面カメラ 2.2台目のカメラ 3.最初のカメラ
     const backCamera = cams.find(c => {
       if (!c || !c.label) return false;
       const label = c.label.toLowerCase();
       return label.includes('back') || 
              label.includes('rear') || 
              label.includes('environment') || 
-             label.includes('背面') ||
-             label.includes('後ろ') ||
-             label.includes('バック');
+             label.includes('背面');
     });
     
-    // 背面カメラが見つかった場合はそれを使用
     if (backCamera) {
       deviceId = backCamera.deviceId;
-      console.log('背面カメラが見つかりました:', backCamera.label);
-    } 
-    // 背面カメラが見つからない、または前回に背面カメラの使用を試みていない場合
-    else if (!backCameraAttempted && cams.length > 1) {
-      // 環境によっては、明示的に"back"という名前でなくても、リストの2番目が背面カメラの場合がある
-      deviceId = cams[1].deviceId;
-      backCameraAttempted = true; // 背面カメラの使用を試みたフラグを立てる
-      console.log('背面カメラが見つからないため、2番目のカメラを試用します:', cams[1].label);
-    } 
-    // それ以外の場合は最初のカメラを使用
-    else {
-      deviceId = cams[0].deviceId;
-      console.log('適切なカメラが見つからないため、最初のカメラを使用します:', cams[0].label);
+      console.log('背面カメラを使用:', backCamera.label);
+    } else if (cams.length > 1) {
+      deviceId = cams[1].deviceId; // 2番目のカメラを試す
+      console.log('2番目のカメラを使用:', cams[1].label);
+    } else {
+      deviceId = cams[0].deviceId; // 最初のカメラを使用
+      console.log('最初のカメラを使用:', cams[0].label);
+    }
+    
+    // 記憶しておく
+    preferredDeviceId = deviceId;
+
+    // キャンバスをクリア
+    const video = document.getElementById('reader');
+    if (video) {
+      const ctx = document.createElement('canvas').getContext('2d');
+      ctx.drawImage(video, 0, 0, 1, 1); // ビデオをクリア
     }
 
-    // 選択したカメラIDを保存
-    preferredDeviceId = deviceId;
+    // スキャナーを起動
+    console.log('カメラ起動:', deviceId);
+    document.getElementById('result').textContent = "QRコードを読み取り中...";
     
-    // カメラ起動ボタンを非表示にし、プレビュー領域を表示
-    document.getElementById('startCameraBtn').classList.add('hidden');
-    document.getElementById('reader').classList.remove('hidden');
+    // スキャナーをアクティブに設定
+    scannerActive = true;
     
-    // QRコードの検出を開始
-    console.log('カメラ起動開始 - デバイスID:', deviceId);
-    
-    codeReader.decodeFromVideoDevice(deviceId, 'reader', (res, err) => {
-      if (res) {
-        // QRコードが検出された場合
-        onScanSuccess(res.getText());
-        codeReader.reset();
-      } else if (err && !(err instanceof NotFoundException)) {
-        // QRコードが検出されなかったが、エラーがある場合
-        console.error('カメラエラー:', err);
-        
-        // エラーメッセージをわかりやすく変換
-        let errorMessage = 'カメラエラーが発生しました: ' + (err.message || '不明なエラー');
-        
-        if (err.name === 'NotAllowedError') {
-          errorMessage = 'カメラへのアクセスが許可されていません。ブラウザの設定で、このサイトへのカメラアクセスを許可してください。';
-        } else if (err.name === 'NotFoundError' || (err.message && err.message.includes('not found'))) {
-          errorMessage = '選択されたカメラが見つかりません。ページを再読み込みしてください。';
-        } else if (err.name === 'NotReadableError') {
-          errorMessage = 'カメラが他のアプリケーションで使用されている可能性があります。他のアプリを終了して、ページを再読み込みしてください。';
+    // エラー表示表示済みフラグ (エラーの重複表示を防止)
+    let errorDisplayed = false;
+
+    // デコード開始
+    codeReader.decodeFromVideoDevice(
+      deviceId,
+      'reader',
+      (result, err) => {
+        // QRコードが見つかった場合
+        if (result) {
+          try {
+            console.log('QRコード検出:', result.getText());
+            scannerActive = false;
+            codeReader.reset(); // スキャナーを停止
+            onScanSuccess(result.getText());
+          } catch (processError) {
+            console.error('QRコード処理中のエラー:', processError);
+            if (!errorDisplayed) {
+              errorDisplayed = true;
+              showErrorPopup("QR読み取りエラー", "QRコードの処理中にエラーが発生しました", resetScannerState);
+            }
+          }
         }
-        
-        // 重複したエラー表示を防止
-        if (document.getElementById('popupOverlay').style.display !== 'flex') {
-          showErrorPopup('カメラエラー', errorMessage, returnToScanner);
+        // エラーが発生した場合（NotFoundExceptionは正常な状態なのでスキップ）
+        else if (err && !(err instanceof NotFoundException)) {
+          console.warn('カメラエラー:', err);
+          
+          // 重大なエラーのみポップアップ表示
+          // 多くのエラーは一時的なもので、自動的に回復する可能性があるため
+          if ((err.name === 'NotAllowedError' || 
+               err.name === 'NotFoundError' || 
+               err.name === 'NotReadableError') && 
+              !errorDisplayed) {
+            
+            errorDisplayed = true;
+            let errorMsg = 'カメラエラーが発生しました';
+            
+            if (err.name === 'NotAllowedError') {
+              errorMsg = 'カメラへのアクセスが許可されていません';
+            } else if (err.name === 'NotFoundError') {
+              errorMsg = 'カメラが見つかりません';
+            } else if (err.name === 'NotReadableError') {
+              errorMsg = 'カメラが他のアプリに使用されています';
+            }
+            
+            showErrorPopup("カメラエラー", errorMsg, resetScannerState);
+          }
         }
       }
-      // NotFoundExceptionは無視（QRコードが見つからないだけのため）
+    ).catch(initErr => {
+      console.error('カメラ初期化エラー:', initErr);
+      scannerActive = false;
+      document.getElementById('startCameraBtn').classList.remove('hidden');
+      document.getElementById('result').textContent = "カメラの起動に失敗しました";
+      
+      let errorMsg = 'カメラの起動に失敗しました。ページを再読み込みしてお試しください。';
+      if (initErr.name === 'NotAllowedError') {
+        errorMsg = 'カメラの使用が許可されていません。ブラウザの設定でカメラへのアクセスを許可してください。';
+      }
+      
+      if (!errorDisplayed) {
+        errorDisplayed = true;
+        showErrorPopup("カメラエラー", errorMsg, resetScannerState);
+      }
     });
-
+    
   } catch (e) {
-    console.error('カメラ起動エラー:', e);
-    let alertMessage = 'カメラの起動に失敗しました。';
-    
-    if (e.name === 'NotAllowedError') {
-      alertMessage = 'カメラへのアクセスが許可されていません。ブラウザの設定で、このサイトへのカメラアクセスを許可してください。';
-    }
-    
-    alert(alertMessage + '\n\nページを再読み込みしてお試しください。');
+    console.error('スキャナー起動エラー:', e);
+    scannerActive = false;
+    document.getElementById('startCameraBtn').classList.remove('hidden');
+    document.getElementById('result').textContent = "カメラ接続エラー";
+    showErrorPopup("エラー", "カメラの起動に失敗しました。ページを再読み込みしてお試しください。", resetScannerState);
   }
+}
+
+// スキャナー状態のリセット
+function resetScannerState() {
+  scannerActive = false;
+  if (codeReader) {
+    try {
+      codeReader.reset();
+    } catch (e) {
+      console.warn('codeReader リセットエラー:', e);
+    }
+  }
+  document.getElementById('startCameraBtn').classList.remove('hidden');
+  document.getElementById('result').textContent = "読み取り待機中...";
 }
 
   /* ---------- 画像ファイル読み取り ---------- */
@@ -515,16 +585,29 @@ async function startScanner() {
     }
   }
 
-/* ========== 改良されたonScanSuccess ========== */
+/* ========== QRコード読み取り成功時の処理（安定版） ========== */
 async function onScanSuccess(decodedText) {
+  // 重複処理防止（同じQRを連続で読み取った場合）
   if (CURRENT_TEXT === decodedText) return;
+  
+  // スキャナーのリセット・停止
+  if (codeReader) {
+    try {
+      codeReader.reset();
+      scannerActive = false;
+    } catch (e) {
+      console.warn('スキャナーリセットエラー:', e);
+    }
+  }
+  
+  // 結果表示
   CURRENT_TEXT = decodedText;
   document.getElementById("result").textContent = `QRコード読み取り完了: ${decodedText}`;
-  document.getElementById("formArea").classList.remove("hidden");
   document.getElementById("codeDisplay").textContent = decodedText;
   
-  // スキャナーを非表示にしてフォームを見やすくする
+  // UI表示切替
   document.getElementById("reader").classList.add("hidden");
+  document.getElementById("formArea").classList.remove("hidden");
 
   try {
     console.log('アイテム情報取得開始', decodedText);
@@ -611,24 +694,31 @@ async function onScanSuccess(decodedText) {
     document.getElementById('popupOverlay').style.display='none';
   }
 
-  /* ---------- カメラ画面へ戻る (改善版) ---------- */
+  /* ---------- カメラ画面へ戻る (シンプル版) ---------- */
   function returnToScanner(){
+    // リセット
     document.getElementById("formArea").classList.add("hidden");
-    document.getElementById("reader").classList.remove("hidden"); // カメラプレビューを再表示
-    document.getElementById("startCameraBtn").classList.remove("hidden"); // 起動ボタンも再表示
+    document.getElementById("reader").classList.remove("hidden");
+    document.getElementById("startCameraBtn").classList.remove("hidden");
     document.getElementById("result").textContent = "読み取り待機中…";
     document.getElementById("itemNameDisplay").textContent = "";
     CURRENT_TEXT = "";
     resetModeUI();
     
-    // カメラをリセットして再起動
+    // カメラをリセット
     if (codeReader) {
-      codeReader.reset();
-      // わずかな遅延を入れてから再起動
-      setTimeout(() => {
-        startScanner();
-      }, 300);
+      try {
+        codeReader.reset();
+        scannerActive = false;
+      } catch (e) {
+        console.warn('スキャナーリセットエラー:', e);
+      }
     }
+    
+    // 遅延させてカメラを再起動
+    setTimeout(() => {
+      startScanner();
+    }, 500);
   }
 
   /* ---------- データ送信 ---------- */
@@ -701,7 +791,7 @@ async function submitData(operation) {
       if (response.result === 'success') {
         showPopup("更新完了", response.message, () => {
           document.getElementById("staffSelect").value = "";
-          document.getElementById("quantityInput").value = "";  // quantitySelect → quantityInput に修正
+          document.getElementById("quantityInput").value = "";
           document.getElementById("result").textContent = "";
           document.getElementById("formArea").classList.add("hidden");
           document.getElementById("itemNameDisplay").textContent = "";
@@ -723,7 +813,7 @@ async function submitData(operation) {
       showPopup("更新完了", response.message, () => {
         /* 入力フォーム初期化など */
         document.getElementById("staffSelect").value = "";
-        document.getElementById("quantityInput").value = "";  // quantitySelect → quantityInput に修正
+        document.getElementById("quantityInput").value = "";
         document.getElementById("result").textContent = "";
         document.getElementById("formArea").classList.add("hidden");
         document.getElementById("itemNameDisplay").textContent = "";
