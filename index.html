@@ -29,6 +29,27 @@ main{width:100vw;padding:24px;box-sizing:border-box;}
   box-shadow:0 8px 24px rgba(0,0,0,.06);margin-top:24px;
 }
 
+/* ========== カメラコントロール ========== */
+#cameraControls{
+  display:flex;gap:12px;margin:16px 0;justify-content:center;flex-wrap:wrap;
+}
+.camera-btn{
+  padding:12px 20px;font-size:18px;border:none;border-radius:24px;
+  cursor:pointer;background:#fff;color:#1e88e5;
+  border:2px solid #1e88e5;transition:all 0.2s ease;
+  min-width:120px;
+}
+.camera-btn:hover{
+  background:#1e88e5;color:#fff;
+}
+.camera-btn.active{
+  background:#1e88e5;color:#fff;
+  box-shadow:0 2px 6px rgba(30,136,229,0.3);
+}
+.camera-btn:disabled{
+  background:#f5f5f5;color:#999;border-color:#ddd;cursor:not-allowed;
+}
+
 /* ========== "ラベル:値" を 2 列グリッドで ========== */
 .field{
   display:grid;grid-template-columns:max-content 1fr;align-items:center;
@@ -104,7 +125,13 @@ select, input[type="number"]{
   <video id="reader" playsinline muted></video>
   <div id="result" style="margin-top:8px;color:#089;">読み取り待機中…</div>
 
-  <!-- ② カメラ開始ボタン & 画像フォールバック -->
+  <!-- ② カメラコントロール -->
+  <div id="cameraControls" class="hidden">
+    <button id="backCameraBtn" class="camera-btn active">📷 背面カメラ</button>
+    <button id="frontCameraBtn" class="camera-btn">🤳 前面カメラ</button>
+  </div>
+
+  <!-- ③ カメラ開始ボタン & 画像フォールバック -->
   <button id="startCameraBtn" class="btn">カメラを起動</button>
   <input id="fileInput"
          type="file"
@@ -329,7 +356,9 @@ async function runSafariDiagnostics() {
   let selectedMode      = null;
   let currentStockOut   = 0;
   let currentStockVis   = 0;
-  let backCameraDeviceId = null; // 背面カメラのデバイスIDを保存
+  let availableCameras  = []; // 利用可能なカメラ一覧
+  let currentCameraId   = null; // 現在使用中のカメラID
+  let isScanning        = false; // スキャン中フラグ
 
 /* ---------- ページロード後（デバッグ版） ---------- */
 document.addEventListener('DOMContentLoaded', () => {
@@ -375,7 +404,13 @@ document.addEventListener('DOMContentLoaded', () => {
   codeReader = new BrowserQRCodeReader(undefined, { delayBetweenScanAttempts: 200 });
 
   document.getElementById('startCameraBtn')
-          .addEventListener('click', startScanner);
+          .addEventListener('click', initializeCamera);
+
+  document.getElementById('backCameraBtn')
+          .addEventListener('click', () => switchCamera('back'));
+
+  document.getElementById('frontCameraBtn')
+          .addEventListener('click', () => switchCamera('front'));
 
   document.getElementById('fileInput')
           .addEventListener('change', e => {
@@ -402,87 +437,159 @@ async function testSafariConnection() {
     return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
   }
 
-  /* ---------- 背面カメラを見つける関数 ---------- */
-  async function findBackCamera() {
-    try {
-      const devices = await codeReader.listVideoInputDevices();
-      console.log('利用可能なカメラデバイス:', devices);
-      
-      // 背面カメラを探す（より厳密な条件）
-      const backCamera = devices.find(device => {
-        const label = device.label.toLowerCase();
-        return (
-          label.includes('back') || 
-          label.includes('rear') || 
-          label.includes('environment') ||
-          label.includes('facing back') ||
-          label.includes('camera 0') ||  // 多くの場合、背面カメラがカメラ0
-          (label.includes('camera') && label.includes('0'))
-        );
-      });
-      
-      if (backCamera) {
-        console.log('背面カメラが見つかりました:', backCamera);
-        return backCamera.deviceId;
-      }
-      
-      // 背面カメラが見つからない場合、デバイスが1つしかない場合はそれを使用
-      if (devices.length === 1) {
-        console.log('カメラが1つのみ。それを背面カメラとして使用:', devices[0]);
-        return devices[0].deviceId;
-      }
-      
-      // それでも見つからない場合はエラー
-      console.warn('背面カメラが見つかりませんでした');
-      return null;
-    } catch (error) {
-      console.error('カメラデバイス取得エラー:', error);
-      return null;
-    }
-  }
-
-  /* ---------- スキャナー起動（背面カメラ限定） ---------- */
-  async function startScanner () {
+  /* ---------- カメラ初期化 ---------- */
+  async function initializeCamera() {
     if (!hasCamera()) {
       console.log('カメラAPIが利用できません。ファイル入力を使用します。');
       return document.getElementById('fileInput').click();
     }
 
     try {
-      // 背面カメラのデバイスIDを取得（初回のみ）
-      if (!backCameraDeviceId) {
-        backCameraDeviceId = await findBackCamera();
-      }
-      
-      if (!backCameraDeviceId) {
-        alert('背面カメラが見つかりません。ファイルからの読み取りをお試しください。');
+      // 利用可能なカメラを取得
+      availableCameras = await codeReader.listVideoInputDevices();
+      console.log('利用可能なカメラ:', availableCameras);
+
+      if (availableCameras.length === 0) {
+        alert('カメラが見つかりません。ファイルからの読み取りをお試しください。');
         return document.getElementById('fileInput').click();
       }
 
-      console.log('背面カメラでスキャン開始:', backCameraDeviceId);
+      // カメラコントロールを表示
+      document.getElementById('cameraControls').classList.remove('hidden');
       
-      // 背面カメラでのみスキャンを開始
-      codeReader.decodeFromVideoDevice(backCameraDeviceId, 'reader', (res, err) => {
-        if (res) {
-          onScanSuccess(res.getText());
-          codeReader.reset();
-        } else if (err && !(err instanceof NotFoundException)) {
-          // エラーハンドリング
-          if (err && err.message) {
-            console.error('カメラエラー:', err.message);
-            // 背面カメラで問題が発生した場合の処理
-            if (err.message.includes('NotReadableError') || err.message.includes('NotAllowedError')) {
-              alert('背面カメラにアクセスできません。カメラの権限を確認してください。');
-            } else {
-              alert('背面カメラエラー: ' + err.message);
-            }
+      // ボタンの有効/無効を設定
+      updateCameraButtons();
+
+      // 背面カメラを優先的に選択
+      const backCamera = findCameraByType('back');
+      const preferredCamera = backCamera || availableCameras[0];
+      
+      currentCameraId = preferredCamera.deviceId;
+      
+      // カメラでスキャン開始
+      startScanningWithCamera(currentCameraId);
+      
+    } catch (error) {
+      console.error('カメラ初期化エラー:', error);
+      alert('カメラの初期化に失敗しました。ファイルからの読み取りをお試しください。');
+      document.getElementById('fileInput').click();
+    }
+  }
+
+  /* ---------- カメラタイプで検索 ---------- */
+  function findCameraByType(type) {
+    const keywords = type === 'back' 
+      ? ['back', 'rear', 'environment', 'facing back', 'camera 0']
+      : ['front', 'user', 'facing front', 'selfie', 'camera 1'];
+    
+    return availableCameras.find(camera => {
+      const label = camera.label.toLowerCase();
+      return keywords.some(keyword => label.includes(keyword));
+    });
+  }
+
+  /* ---------- カメラボタンの更新 ---------- */
+  function updateCameraButtons() {
+    const backBtn = document.getElementById('backCameraBtn');
+    const frontBtn = document.getElementById('frontCameraBtn');
+    
+    const hasBackCamera = findCameraByType('back') !== undefined;
+    const hasFrontCamera = findCameraByType('front') !== undefined;
+    
+    // 背面カメラボタン
+    backBtn.disabled = !hasBackCamera;
+    if (!hasBackCamera) {
+      backBtn.textContent = '📷 背面カメラ (なし)';
+    }
+    
+    // 前面カメラボタン
+    frontBtn.disabled = !hasFrontCamera;
+    if (!hasFrontCamera) {
+      frontBtn.textContent = '🤳 前面カメラ (なし)';
+    }
+    
+    // 1つのカメラしかない場合の処理
+    if (availableCameras.length === 1) {
+      const singleCamera = availableCameras[0];
+      const isBack = findCameraByType('back') === singleCamera;
+      
+      if (isBack) {
+        frontBtn.disabled = true;
+        frontBtn.textContent = '🤳 前面カメラ (なし)';
+      } else {
+        backBtn.disabled = true;
+        backBtn.textContent = '📷 背面カメラ (なし)';
+      }
+    }
+  }
+
+  /* ---------- カメラ切替 ---------- */
+  async function switchCamera(type) {
+    const targetCamera = findCameraByType(type);
+    
+    if (!targetCamera) {
+      alert(`${type === 'back' ? '背面' : '前面'}カメラが見つかりません。`);
+      return;
+    }
+    
+    if (currentCameraId === targetCamera.deviceId) {
+      return; // 既に選択されているカメラの場合は何もしない
+    }
+    
+    try {
+      // 現在のスキャンを停止
+      codeReader.reset();
+      
+      // 新しいカメラでスキャン開始
+      currentCameraId = targetCamera.deviceId;
+      startScanningWithCamera(currentCameraId);
+      
+      // ボタンの表示を更新
+      updateCameraButtonStates(type);
+      
+    } catch (error) {
+      console.error('カメラ切替エラー:', error);
+      alert('カメラの切替に失敗しました。');
+    }
+  }
+
+  /* ---------- カメラボタンの状態更新 ---------- */
+  function updateCameraButtonStates(activeType) {
+    const backBtn = document.getElementById('backCameraBtn');
+    const frontBtn = document.getElementById('frontCameraBtn');
+    
+    backBtn.classList.toggle('active', activeType === 'back');
+    frontBtn.classList.toggle('active', activeType === 'front');
+  }
+
+  /* ---------- 指定カメラでスキャン開始 ---------- */
+  function startScanningWithCamera(deviceId) {
+    isScanning = true;
+    
+    console.log('カメラでスキャン開始:', deviceId);
+    
+    codeReader.decodeFromVideoDevice(deviceId, 'reader', (res, err) => {
+      if (res) {
+        onScanSuccess(res.getText());
+        codeReader.reset();
+        isScanning = false;
+      } else if (err && !(err instanceof NotFoundException)) {
+        if (err && err.message) {
+          console.error('カメラエラー:', err.message);
+          // 重要なエラーのみアラート表示
+          if (err.message.includes('NotReadableError') || err.message.includes('NotAllowedError')) {
+            alert('カメラにアクセスできません。カメラの権限を確認してください。');
+            isScanning = false;
           }
         }
-      });
-    } catch (error) {
-      console.error('スキャナー起動エラー:', error);
-      alert('背面カメラの起動に失敗しました。ファイルからの読み取りをお試しください。');
-      document.getElementById('fileInput').click();
+      }
+    });
+    
+    // 現在使用中のカメラタイプを判定してボタン状態を更新
+    const currentCamera = availableCameras.find(cam => cam.deviceId === deviceId);
+    if (currentCamera) {
+      const isBackCamera = findCameraByType('back') === currentCamera;
+      updateCameraButtonStates(isBackCamera ? 'back' : 'front');
     }
   }
 
@@ -596,7 +703,13 @@ async function onScanSuccess(decodedText) {
     document.getElementById("itemNameDisplay").textContent="";
     CURRENT_TEXT="";
     resetModeUI();
-    startScanner(); 
+    
+    // 現在のカメラでスキャンを再開
+    if (currentCameraId && hasCamera()) {
+      startScanningWithCamera(currentCameraId);
+    } else {
+      initializeCamera();
+    }
   }
 
   /* ---------- データ送信 ---------- */
